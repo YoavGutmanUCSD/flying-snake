@@ -1,0 +1,11 @@
+(fun (iseven x) 
+  (if (= x 0)
+      true
+      (isodd (- x 1))))
+
+(fun (isodd x) 
+  (if (= x 0)
+      false
+      (iseven (- x 1))))
+
+(iseven input)

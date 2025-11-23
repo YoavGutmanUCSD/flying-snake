@@ -1,0 +1,7 @@
+(let ((i input) (x 1))
+ (loop
+  (if (<= i 0)
+   (break x)
+   (block 
+	(set! x (* x i))
+	(set! i (- i 1))))))

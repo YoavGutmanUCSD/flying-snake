@@ -1,0 +1,6 @@
+(fun (fact acc n) 
+  (if (= n 1)
+    acc
+	(fact (* acc n) (sub1 n))))
+
+(fact 1 input)

@@ -1,0 +1,6 @@
+(fun (fact (acc : Num) (n : Num)) -> Num
+  (if (= n 1)
+    acc
+	(fact (* acc n) (sub1 n))))
+
+(fact 1 (cast input Num))
