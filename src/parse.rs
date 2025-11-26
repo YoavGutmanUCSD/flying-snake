@@ -45,7 +45,7 @@ pub fn parse_expr(s: &Sexp) -> Result<Expr, ParseError> {
                 [Sexp::Atom(S(op)), e] if op == "print" => {
                     Ok(Expr::Print(Box::new(parse_expr(e)?)))
                 },
-                [Sexp::Atom(S(cast)), e, Sexp::Atom(S(e_type))] if cast == "cast" => {
+                [Sexp::Atom(S(cast)), Sexp::Atom(S(e_type)), e] if cast == "cast" => {
                     Ok(Expr::Cast(Box::new(parse_expr(e)?), parse_type(e_type)?))
                 }
                 [Sexp::Atom(S(fname)), es @ .. ] => {
