@@ -126,6 +126,9 @@ pub fn tc(e: &Expr, env: &HashMap<String, Type>, fn_env: &HashMap<String, (Vec<(
             }
         }
         Expr::Block(exprs) => {
+            // NOTE: the block type is the type of the last expression.
+            // for all previous expressions, only break types count.
+            // this is why I use saturating_sub here.
             let (last_type, last_breaks) = tc(&exprs[exprs.len().saturating_sub(1)], env, fn_env)?;
             let mut block_break_type = last_breaks;
             for e in exprs[0..exprs.len().saturating_sub(1)].iter() {
