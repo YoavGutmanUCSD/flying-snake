@@ -168,13 +168,10 @@ pub fn tc(e: &Expr, env: &HashMap<String, Type>, fn_env: &HashMap<String, (Vec<(
             tc(e, env, fn_env)
         }
         Expr::Cast(e, expected_type) => {
-            let (e_type, e_breaks) = tc(e, env, fn_env)?;
+            let (_, e_breaks) = tc(e, env, fn_env)?;
 
-            if e_type != *expected_type {
-                Err(TypeError::BadCast)
-            } else {
-                Ok((*expected_type, e_breaks))
-            }
+            // it turns out we are supposed to assume the expected type is correct
+            Ok((*expected_type, e_breaks))
         }
     }
 }
