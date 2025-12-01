@@ -34,6 +34,7 @@ fn snek_end(val: i64) -> Result<ReturnValue, RuntimeError> {
             match (val >> 3) & 7 {
                 0 => Err(RuntimeError::TypeError),
                 1 => Err(RuntimeError::OverflowError),
+                2 => Err(RuntimeError::CastError),
                 _ => Err(RuntimeError::BadError)
             }
         },

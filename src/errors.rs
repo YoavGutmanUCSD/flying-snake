@@ -33,6 +33,7 @@ pub enum CompileError {
 pub enum RuntimeError {
     TypeError,
     OverflowError,
+    CastError,
     BadError
 }
 
@@ -52,6 +53,9 @@ impl fmt::Debug for RuntimeError {
             }
             RuntimeError::OverflowError => {
                 write!(f, "Integer overflow.")
+            }
+            RuntimeError::CastError => {
+                write!(f, "Bad cast.")
             }
             RuntimeError::BadError => {
                 write!(f, "Unknown error")
