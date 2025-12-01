@@ -200,12 +200,15 @@ fn create_fn_tc_env(defs: &Vec<(String, Type)>) -> im::HashMap<String, Type> {
 fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool) {
     let mut input = String::new();
     let mut define_vals: im::HashMap<String, Val> = im::HashMap::new();
+
+    // define'd variables stored in a vector
     let mut define_vec: Vec<i64> = Vec::new();
+    let mut place: i32 = 0; // index of next available slot
 
-    // map of name to # of args
+    // map: function name -> (list of (arg, arg_type), function type)
     let mut functions: FnDefs = im::HashMap::new();
-    let mut place: i32 = 0;
 
+    // map: define'd variable name -> variable type
     let mut start_env = im::HashMap::new();
 
     loop {
@@ -285,8 +288,11 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         // let f_args: im::HashSet<String> = f.args.iter().fold(im::HashSet::new(),
                         //     |acc, a| acc.update(a.to_string()));
                         let tentative_functions = functions.update(f.name.clone(), (f_args, f.fn_type));
+
                         if is_typed {
+                            // typecheck environment using function args
                             let fn_env = create_fn_tc_env(fn_defs);
+
                             match main_tc(&f.body, &fn_env, &tentative_functions) {
                                 Ok(e_type) => {
                                     if e_type == fn_type {
@@ -303,7 +309,11 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                                 }
                             }
                         }
+
+                        // save tentative functions, now that it is good
                         functions = tentative_functions;
+
+                        // create fn context
                         let shared_fn_context = SharedContext {
                             function_definitions: functions.clone(),
                             fn_name: Some(f.name.clone()),
@@ -314,6 +324,8 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                             shared: &shared_fn_context,
                             ..local_context.clone()
                         };
+
+                        // compile function and send to emitter
                         let res = compile_fn_maybe(f, fn_context)
                             .map_err(std::io::Error::from) // enter the io ecosystem
                             .and_then(|(name, instrs)| consume_dynasm(&mut emitter, name, instrs));
