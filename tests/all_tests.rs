@@ -13,7 +13,7 @@ success_tests! {
 
 runtime_error_tests! {
     test_type_err: {file: "fact_loop", input: "true", expected: "Invalid arguments"},
-    test_bad_cast: {file: "typed_fact_tail_rec", input: "true", expected: "Type error", typecheck: true}
+    test_bad_cast: {file: "typed_fact_tail_rec", input: "true", expected: "Runtime error", typecheck: true}
 }
 
 static_error_tests! {
