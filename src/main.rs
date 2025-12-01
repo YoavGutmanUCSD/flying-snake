@@ -291,7 +291,13 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
 
                         if is_typed {
                             // typecheck environment using function args
-                            let fn_env = create_fn_tc_env(fn_defs);
+                            let args_env = create_fn_tc_env(fn_defs);
+
+                            // union of args_env and start_env
+                            let mut fn_env = args_env;
+                            for (id, t) in &start_env {
+                                fn_env = fn_env.update(id.to_string(), *t);
+                            }
 
                             match main_tc(&f.body, &fn_env, &tentative_functions) {
                                 Ok(e_type) => {
