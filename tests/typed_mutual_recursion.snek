@@ -8,4 +8,4 @@
       false
       (iseven (- x 1))))
 
-(iseven (cast input Num))
+(iseven (cast Num input))
