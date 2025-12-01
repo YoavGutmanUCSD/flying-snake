@@ -1,28 +1,30 @@
-use crate::instr::{Instr, OpCode, BranchCode, Loc, Val, JumpDst};
-use dynasmrt::{dynasm, DynasmApi, DynamicLabel, DynasmLabelApi};
-use std::collections::HashMap;
+use crate::instr::{BranchCode, Instr, JumpDst, Loc, OpCode, Val};
 use dynasmrt::x64::Rq::*;
+use dynasmrt::{dynasm, DynamicLabel, DynasmApi, DynasmLabelApi};
+use std::collections::HashMap;
 
 fn snek_print(i: i64) -> i64 {
     match i & 7 {
-        0b111 => {
-            match (i >> 3) & 7 {
-                0 => eprintln!("Invalid arguments to one or more functions."),
-                1 => eprintln!("Integer overflow."),
-                _ => eprintln!("Unknown error")
-            }
+        0b111 => match (i >> 3) & 7 {
+            0 => eprintln!("Invalid arguments to one or more functions."),
+            1 => eprintln!("Integer overflow."),
+            _ => eprintln!("Unknown error"),
         },
         0b011 => println!("true"),
         0b001 => println!("false"),
         _ if i & 1 == 0 => {
             println!("{}", i >> 1)
-        },
-        _ => eprintln!("Unknown error")
+        }
+        _ => eprintln!("Unknown error"),
     }
     return i;
 }
 
-pub fn update_label_table(ops: &mut dynasmrt::x64::Assembler, is: &[Instr], table: &mut HashMap<String, DynamicLabel>) {
+pub fn update_label_table(
+    ops: &mut dynasmrt::x64::Assembler,
+    is: &[Instr],
+    table: &mut HashMap<String, DynamicLabel>,
+) {
     for i in is {
         if let Instr::Label(label) = i {
             if let None = table.get(label) {
@@ -114,10 +116,15 @@ macro_rules! instr_to_asm {
     }
 }
 
-fn jmp_to_asm(ops: &mut dynasmrt::x64::Assembler, branch: &BranchCode, dst: &JumpDst, label_table: &HashMap<String, DynamicLabel>) -> Option<()> {
+fn jmp_to_asm(
+    ops: &mut dynasmrt::x64::Assembler,
+    branch: &BranchCode,
+    dst: &JumpDst,
+    label_table: &HashMap<String, DynamicLabel>,
+) -> Option<()> {
     match (branch, dst) {
         (BranchCode::Jmp, JumpDst::Pointer(RAX)) => dynasm!(ops ; .arch x64 ; jmp rax),
-        (_, JumpDst::Label(l)) =>  match label_table.get(l) {
+        (_, JumpDst::Label(l)) => match label_table.get(l) {
             Some(label_true) => match branch {
                 BranchCode::Jmp => dynasm!(ops ; .arch x64 ; jmp => *label_true),
                 BranchCode::Je => dynasm!(ops ; .arch x64 ; je => *label_true),
@@ -126,53 +133,56 @@ fn jmp_to_asm(ops: &mut dynasmrt::x64::Assembler, branch: &BranchCode, dst: &Jum
             },
             None => return None,
         },
-        _ => return None
+        _ => return None,
     };
     return Some(());
 }
 
-pub fn instr_to_asm(ops: &mut dynasmrt::x64::Assembler, i: &Instr, label_table: &HashMap<String, DynamicLabel>) -> Option<()> {
+pub fn instr_to_asm(
+    ops: &mut dynasmrt::x64::Assembler,
+    i: &Instr,
+    label_table: &HashMap<String, DynamicLabel>,
+) -> Option<()> {
     match i {
-        Instr::Label(label) =>
+        Instr::Label(label) => {
             if let Some(label_real) = label_table.get(label) {
                 dynasm!(ops ; .arch x64 ; =>*label_real);
-            }
-            else {
+            } else {
                 return None;
-            },
+            }
+        }
         Instr::Jump(branch, dst) => {
             // this is the end of execution if it gets here
             return jmp_to_asm(ops, branch, dst, label_table);
-        },
+        }
         _a @ Instr::TwoArg(op, dst, src) => match op {
-            OpCode::IMov    => {
+            OpCode::IMov => {
                 // println!("running: {}", a.to_string());
                 instr_to_asm!(ops, mov, dst, src)
             }
-            OpCode::IAdd    => instr_to_asm!(ops, add, dst, src),
-            OpCode::ISub    => instr_to_asm!(ops, sub, dst, src),
-            OpCode::IMul    => instr_to_asm!(ops, imul, dst, src),
-            OpCode::IXor    => instr_to_asm!(ops, xor, dst, src),
-            OpCode::ICmp    => instr_to_asm!(ops, cmp, dst, src),
-            OpCode::ITest   => instr_to_asm!(ops, test, dst, src),
-            OpCode::ICMove  => cmov_to_asm!(ops, cmove, dst, src),
-            OpCode::ICMovg  => cmov_to_asm!(ops, cmovg, dst, src),
+            OpCode::IAdd => instr_to_asm!(ops, add, dst, src),
+            OpCode::ISub => instr_to_asm!(ops, sub, dst, src),
+            OpCode::IMul => instr_to_asm!(ops, imul, dst, src),
+            OpCode::IXor => instr_to_asm!(ops, xor, dst, src),
+            OpCode::ICmp => instr_to_asm!(ops, cmp, dst, src),
+            OpCode::ITest => instr_to_asm!(ops, test, dst, src),
+            OpCode::ICMove => cmov_to_asm!(ops, cmove, dst, src),
+            OpCode::ICMovg => cmov_to_asm!(ops, cmovg, dst, src),
             OpCode::ICMovge => cmov_to_asm!(ops, cmovge, dst, src),
-            OpCode::ICMovl  => cmov_to_asm!(ops, cmovl, dst, src),
+            OpCode::ICMovl => cmov_to_asm!(ops, cmovl, dst, src),
             OpCode::ICMovle => cmov_to_asm!(ops, cmovle, dst, src),
-            OpCode::ILsh    => shift_to_asm!(ops, shl, dst, src),
-            OpCode::IRsh    => shift_to_asm!(ops, shr, dst, src),
+            OpCode::ILsh => shift_to_asm!(ops, shl, dst, src),
+            OpCode::IRsh => shift_to_asm!(ops, shr, dst, src),
         },
         Instr::Neg(dst) => instr_to_asm!(ops, neg, dst),
         Instr::Ret => dynasm!(ops ; .arch x64 ; ret),
         Instr::MovLabel(reg, label) => {
             if let Some(label_real) = label_table.get(label) {
                 dynasm!(ops ; .arch x64 ; lea Rq(*reg as u8), [=>*label_real]);
-            }
-            else {
+            } else {
                 return None;
             }
-        },
+        }
         Instr::CallPrint(reg) => {
             dynasm!(ops ; .arch x64
                 ; mov Rq(*reg as u8), QWORD snek_print as _
@@ -182,11 +192,15 @@ pub fn instr_to_asm(ops: &mut dynasmrt::x64::Assembler, i: &Instr, label_table: 
     return Some(());
 }
 
-pub fn i2a_slice(ops: &mut dynasmrt::x64::Assembler, instrs: &[Instr], label_map: &HashMap<String, DynamicLabel>) -> Option<()> {
+pub fn i2a_slice(
+    ops: &mut dynasmrt::x64::Assembler,
+    instrs: &[Instr],
+    label_map: &HashMap<String, DynamicLabel>,
+) -> Option<()> {
     for i in instrs {
         match instr_to_asm(ops, i, &label_map) {
             None => println!("[ERR] we got it right here: {}", i.to_string()),
-            _ => ()
+            _ => (),
         }
     }
     Some(())

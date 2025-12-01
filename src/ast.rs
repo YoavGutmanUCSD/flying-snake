@@ -1,10 +1,24 @@
 use crate::types::Type;
 // Expressions
 #[derive(Clone, Copy)]
-pub enum Op1 { Add1, Sub1, IsNum, IsBool}
+pub enum Op1 {
+    Add1,
+    Sub1,
+    IsNum,
+    IsBool,
+}
 
 #[derive(Clone, Copy)]
-pub enum Op2 { Plus, Minus, Times, Equal, Greater, GreaterEqual, Less, LessEqual}
+pub enum Op2 {
+    Plus,
+    Minus,
+    Times,
+    Equal,
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
+}
 
 pub enum Expr {
     Number(i64),
@@ -20,8 +34,7 @@ pub enum Expr {
     Block(Vec<Expr>),
     Call(String, Vec<Expr>),
     Print(Box<Expr>),
-    Cast(Box<Expr>, Type)
-    // TailCall(String, Vec<Expr>) // eventually
+    Cast(Box<Expr>, Type), // TailCall(String, Vec<Expr>) // eventually
 }
 
 // pub enum SnekFn {
@@ -32,7 +45,7 @@ pub struct SnekFn {
     pub name: String,
     pub args: Vec<(String, Type)>,
     pub body: Expr,
-    pub fn_type: Type
+    pub fn_type: Type,
 }
 
 /* this is left as an example for future reader(s???)

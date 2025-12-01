@@ -1,7 +1,7 @@
+use crate::types::Type;
 use std::fmt;
 use std::io;
-use std::io::{ErrorKind, Error};
-use crate::types::Type;
+use std::io::{Error, ErrorKind};
 
 pub enum ParseError {
     BadList,
@@ -13,7 +13,7 @@ pub enum ParseError {
     SingleBadFnArg,
     BadFnExpr,
     BadType,
-    BadlyTypedFnArg
+    BadlyTypedFnArg,
 }
 
 pub enum CompileError {
@@ -34,7 +34,7 @@ pub enum RuntimeError {
     TypeError,
     OverflowError,
     CastError,
-    BadError
+    BadError,
 }
 
 pub enum TypeError {
@@ -70,34 +70,39 @@ impl fmt::Debug for CompileError {
             CompileError::UnboundIdentifier(s) => {
                 write!(f, "Unbound variable identifier ")?;
                 f.write_str(s)
-            },
+            }
             CompileError::DuplicateBinding => write!(f, "Duplicate binding."),
             CompileError::NoBreakTarget => write!(f, "No break target! Break outside of loop."),
-            CompileError::SetUnboundVariable => write!(f, "Tried to set! a variable that wasn't defined."),
+            CompileError::SetUnboundVariable => {
+                write!(f, "Tried to set! a variable that wasn't defined.")
+            }
             CompileError::SetKeyword => write!(f, "Tried to redefine a keyword."),
             CompileError::FnDupArg(fname, id) => {
                 write!(f, "Duplicate parameter ")?;
                 f.write_str(id)?;
                 write!(f, " in function ")?;
                 f.write_str(fname)
-            },
+            }
             CompileError::FnUnbound(fname) => {
                 write!(f, "Unbound function: ")?;
                 f.write_str(fname)
-            },
+            }
             CompileError::FnBadArgs(fname, expected, received) => {
-                let msg = format!("Arity mismatch in call to '{}': expected {} got {}", fname, expected, received);
+                let msg = format!(
+                    "Arity mismatch in call to '{}': expected {} got {}",
+                    fname, expected, received
+                );
                 f.write_str(&msg)
-            },
+            }
             CompileError::FnDup(fname) => {
                 let msg = format!("Duplicate function definition: {}", fname);
                 f.write_str(&msg)
-            },
+            }
             CompileError::IllegalInput(fname) => {
                 let msg = format!("Illegal usage of input in function '{}'", fname);
                 f.write_str(&msg)
             }
-            CompileError::Other(s) => f.write_str(s)
+            CompileError::Other(s) => f.write_str(s),
         }
     }
 }
@@ -114,7 +119,9 @@ impl fmt::Debug for ParseError {
             ParseError::BadFnArgs => write!(f, "bad function args"),
             ParseError::SingleBadFnArg => write!(f, "one bad function arg"),
             ParseError::BadType => write!(f, "bad type"),
-            ParseError::BadlyTypedFnArg => write!(f, "type wasn't written correctly for a function argument")
+            ParseError::BadlyTypedFnArg => {
+                write!(f, "type wasn't written correctly for a function argument")
+            }
         }
     }
 }
@@ -123,20 +130,23 @@ impl fmt::Debug for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             TypeError::TypeMismatch(expected, got) => {
-                let msg = format!("Expected {}, got {}.",
+                let msg = format!(
+                    "Expected {}, got {}.",
                     expected.to_string(),
                     got.to_string()
                 );
                 f.write_str(&*msg)
             }
             TypeError::UntypedIdentifier(id) => {
-                let msg = format!("No type for identifier {}. Might be unbound.",
+                let msg = format!(
+                    "No type for identifier {}. Might be unbound.",
                     id.to_string(),
                 );
                 f.write_str(&*msg)
             }
             TypeError::UnboundFunctionNoType(f_id) => {
-                let msg = format!("No type for function {}. Might be unbound.",
+                let msg = format!(
+                    "No type for function {}. Might be unbound.",
                     f_id.to_string(),
                 );
                 f.write_str(&*msg)
@@ -144,27 +154,25 @@ impl fmt::Debug for TypeError {
             TypeError::BadCast => {
                 write!(f, "Bad cast.")
             }
-            TypeError::DoesNotTC => write!(f, "Program does not typecheck.")
+            TypeError::DoesNotTC => write!(f, "Program does not typecheck."),
         }
     }
 }
-
 
 // this does what i wanted out of and_then!
 // thank you ChatGPT for explaining the mechanics of the rust type system to me...
 pub trait HomogenousBind<T, E> {
     fn bind<F, U, E2>(self, f: F) -> Result<U, E>
-        where
-            F: FnOnce(T) -> Result<U, E2>,
-            E: From<E2>;
+    where
+        F: FnOnce(T) -> Result<U, E2>,
+        E: From<E2>;
 }
-
 
 impl<T, E> HomogenousBind<T, E> for Result<T, E> {
     fn bind<F, U, E2>(self, f: F) -> Result<U, E>
-        where
-            F: FnOnce(T) -> Result<U, E2>,
-            E: From<E2>
+    where
+        F: FnOnce(T) -> Result<U, E2>,
+        E: From<E2>,
     {
         Ok(f(self?)?)
     }
@@ -180,7 +188,6 @@ impl From<CompileError> for io::Error {
     fn from(e: CompileError) -> io::Error {
         Error::new(ErrorKind::Other, format!("Compile error: {:?}", e))
     }
-
 }
 
 impl From<RuntimeError> for io::Error {

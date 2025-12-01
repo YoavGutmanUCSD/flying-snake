@@ -1,6 +1,12 @@
 // Add paste crate for macro identifier concatenation
 use std::{
-    fs::File, io::{prelude::*, BufReader, Write}, path::{Path, PathBuf}, process::{Command, Stdio}, sync::mpsc, thread, time::Duration
+    fs::File,
+    io::{prelude::*, BufReader, Write},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::mpsc,
+    thread,
+    time::Duration,
 };
 
 #[derive(Debug)]
@@ -49,8 +55,6 @@ macro_rules! tests {
     };
 }
 
-
-
 pub(crate) fn run_test_with_typecheck_flag(
     name: &str,
     file: &str,
@@ -60,17 +64,38 @@ pub(crate) fn run_test_with_typecheck_flag(
     typecheck: bool,
 ) {
     match kind {
-        TestKind::Success => run_success_test_with_typecheck(name, file, expected, input, typecheck),
-        TestKind::RuntimeError => run_runtime_error_test_with_typecheck(name, file, expected, input, typecheck),
-        TestKind::StaticError => run_static_error_test_with_typecheck(name, file, expected, typecheck),
+        TestKind::Success => {
+            run_success_test_with_typecheck(name, file, expected, input, typecheck)
+        }
+        TestKind::RuntimeError => {
+            run_runtime_error_test_with_typecheck(name, file, expected, input, typecheck)
+        }
+        TestKind::StaticError => {
+            run_static_error_test_with_typecheck(name, file, expected, typecheck)
+        }
     }
 }
-fn run_success_test_with_typecheck(name: &str, file: &str, expected: &str, input: Option<&str>, typecheck: bool) {
+fn run_success_test_with_typecheck(
+    name: &str,
+    file: &str,
+    expected: &str,
+    input: Option<&str>,
+    typecheck: bool,
+) {
     let (jit_out, run_out) = match compile_with_typecheck(name, file, input, typecheck) {
         Ok((jit, run)) => (jit, run),
-        Err(SnekError::Aot(err)) => panic!("expected a successful compilation, but got an AOT error: `{}`", err),
-        Err(SnekError::Jit(err)) => panic!("expected a successful compilation, but got a JIT error: `{}`", err),
-        Err(SnekError::Run(err)) => panic!("expected a successful run, but got a runtime error: `{}`", err),
+        Err(SnekError::Aot(err)) => panic!(
+            "expected a successful compilation, but got an AOT error: `{}`",
+            err
+        ),
+        Err(SnekError::Jit(err)) => panic!(
+            "expected a successful compilation, but got a JIT error: `{}`",
+            err
+        ),
+        Err(SnekError::Run(err)) => panic!(
+            "expected a successful run, but got a runtime error: `{}`",
+            err
+        ),
     };
 
     let expected_trim = expected.trim();
@@ -78,46 +103,85 @@ fn run_success_test_with_typecheck(name: &str, file: &str, expected: &str, input
     let run_trim = run_out.trim();
     let mut failed_flags = Vec::new();
     if expected_trim != jit_trim {
-        failed_flags.push((if typecheck { "-te" } else { "-e" }, jit_trim.to_string(), jit_out));
+        failed_flags.push((
+            if typecheck { "-te" } else { "-e" },
+            jit_trim.to_string(),
+            jit_out,
+        ));
     }
     if expected_trim != run_trim {
-        failed_flags.push((if typecheck { "-tc" } else { "-c" }, run_trim.to_string(), run_out));
+        failed_flags.push((
+            if typecheck { "-tc" } else { "-c" },
+            run_trim.to_string(),
+            run_out,
+        ));
     }
     if !failed_flags.is_empty() {
         for (flag, actual_trim, raw) in &failed_flags {
-            eprintln!("Flag {} unexpected output:\n{}", flag, prettydiff::diff_lines(raw, expected_trim));
+            eprintln!(
+                "Flag {} unexpected output:\n{}",
+                flag,
+                prettydiff::diff_lines(raw, expected_trim)
+            );
         }
-        panic!("test failed: outputs did not match expected value for flags: {:?}", failed_flags.iter().map(|(f,_,_)| *f).collect::<Vec<_>>());
+        panic!(
+            "test failed: outputs did not match expected value for flags: {:?}",
+            failed_flags.iter().map(|(f, _, _)| *f).collect::<Vec<_>>()
+        );
     }
 }
 
-fn run_runtime_error_test_with_typecheck(name: &str, file: &str, expected: &str, input: Option<&str>, typecheck: bool) {
+fn run_runtime_error_test_with_typecheck(
+    name: &str,
+    file: &str,
+    expected: &str,
+    input: Option<&str>,
+    typecheck: bool,
+) {
     match compile_with_typecheck(name, file, input, typecheck) {
         Err(SnekError::Aot(err)) => {
-            panic!("expected a successful compilation, but got an AOT error: `{}`", err);
+            panic!(
+                "expected a successful compilation, but got an AOT error: `{}`",
+                err
+            );
         }
         Err(err) => {
             check_error_msg(&err, expected);
             return;
         }
         Ok((out1, out2)) => {
-            panic!("expected a runtime failure, but program succeeded: `{}` `{}`", out1, out2);
+            panic!(
+                "expected a runtime failure, but program succeeded: `{}` `{}`",
+                out1, out2
+            );
         }
     }
 }
 
 fn run_static_error_test_with_typecheck(name: &str, file: &str, expected: &str, typecheck: bool) {
     match compile_with_typecheck(name, file, None, typecheck) {
-        Ok((e1,e2)) => panic!("expected a failure, but compilation succeeded"),
+        Ok((e1, e2)) => panic!("expected a failure, but compilation succeeded"),
         Err(err) => check_error_msg(&err, expected),
     }
 }
 
 fn check_error_msg(found: &SnekError, expected: &str) {
     match found {
-        SnekError::Aot(err) => assert!( err.contains(expected.trim()), "Compile error message does not match {}", err),
-        SnekError::Jit(err) => assert!( err.contains(expected.trim()), "JIT error message does not match {}", err),
-        SnekError::Run(err) => assert!( err.contains(expected.trim()), "AOT runtime error message does not match {}", err),
+        SnekError::Aot(err) => assert!(
+            err.contains(expected.trim()),
+            "Compile error message does not match {}",
+            err
+        ),
+        SnekError::Jit(err) => assert!(
+            err.contains(expected.trim()),
+            "JIT error message does not match {}",
+            err
+        ),
+        SnekError::Run(err) => assert!(
+            err.contains(expected.trim()),
+            "AOT runtime error message does not match {}",
+            err
+        ),
     }
 }
 
@@ -132,7 +196,6 @@ enum Ext {
     Run,
 }
 
-
 impl std::fmt::Display for Ext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -143,8 +206,12 @@ impl std::fmt::Display for Ext {
     }
 }
 
-
-fn compile_with_typecheck(name: &str, file: &str, input: Option<&str>, typecheck: bool) -> Result<(String, String), SnekError> {
+fn compile_with_typecheck(
+    name: &str,
+    file: &str,
+    input: Option<&str>,
+    typecheck: bool,
+) -> Result<(String, String), SnekError> {
     let boa_path = if cfg!(target_os = "macos") {
         PathBuf::from("target/x86_64-apple-darwin/debug/diamondback")
     } else {
@@ -193,7 +260,6 @@ fn compile_with_typecheck(name: &str, file: &str, input: Option<&str>, typecheck
     Ok((jit_stdout, run_stdout))
 }
 
-
 fn run(name: &str, input: Option<&str>) -> Result<String, String> {
     let mut cmd = Command::new(&mk_path(name, Ext::Run));
     if let Some(input) = input {
@@ -206,7 +272,6 @@ fn run(name: &str, input: Option<&str>) -> Result<String, String> {
         Err(String::from_utf8(output.stderr).unwrap().trim().to_string())
     }
 }
-
 
 #[macro_export]
 macro_rules! repl_tests {
@@ -223,21 +288,26 @@ macro_rules! repl_tests {
     }
 }
 
-pub(crate) fn run_repl_sequence_test(name: &str, commands: &[&str], expected_outputs: &[&str], typecheck: bool) {
+pub(crate) fn run_repl_sequence_test(
+    name: &str,
+    commands: &[&str],
+    expected_outputs: &[&str],
+    typecheck: bool,
+) {
     let actual_outputs = run_repl_with_timeout(commands, 3000, typecheck);
 
     let mut current_pos = 0;
     let mut found_outputs = Vec::new();
-    
+
     for expected in expected_outputs {
         let expected_subs: Vec<&str> = expected.split(',').map(|s| s.trim()).collect();
-        
+
         // Linear scan
         let remaining = &actual_outputs[current_pos..];
         let mut search_pos = 0;
         let mut match_start = None;
         let mut match_end = None;
-        
+
         let mut all_found = true;
         for (i, sub) in expected_subs.iter().enumerate() {
             if let Some(pos) = remaining[search_pos..].find(sub) {
@@ -254,14 +324,17 @@ pub(crate) fn run_repl_sequence_test(name: &str, commands: &[&str], expected_out
                 break;
             }
         }
-        
+
         if all_found {
             if let (Some(start), Some(end)) = (match_start, match_end) {
                 let matched_content = remaining[start..end].trim().to_string();
                 found_outputs.push(matched_content);
                 current_pos = current_pos + end;
             } else {
-                eprintln!("[repl_test] Internal error extracting match for {:?}\nFull output:\n{}", expected_subs, actual_outputs);
+                eprintln!(
+                    "[repl_test] Internal error extracting match for {:?}\nFull output:\n{}",
+                    expected_subs, actual_outputs
+                );
                 panic!("Test '{}' failed: internal error extracting match", name);
             }
         } else {
@@ -275,13 +348,17 @@ pub(crate) fn run_repl_sequence_test(name: &str, commands: &[&str], expected_out
                 prettydiff::diff_lines(&actual_joined, &expected_joined),
                 actual_outputs
             );
-            panic!("Test '{}' failed: expected substrings {:?} not found in order in output", name, expected_subs);
+            panic!(
+                "Test '{}' failed: expected substrings {:?} not found in order in output",
+                name, expected_subs
+            );
         }
     }
-    println!("[repl_test] Success!\nExpected vector: {:?}\nActual vector:   {:?}\n", expected_outputs, found_outputs);
+    println!(
+        "[repl_test] Success!\nExpected vector: {:?}\nActual vector:   {:?}\n",
+        expected_outputs, found_outputs
+    );
 }
-
-
 
 fn run_repl_with_timeout(commands: &[&str], timeout_ms: u64, typecheck: bool) -> String {
     let boa_path = if cfg!(target_os = "macos") {

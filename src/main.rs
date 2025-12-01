@@ -1,39 +1,38 @@
 // You can add as many files as you want
 
-mod compile;
-mod errors;
-mod jit;
 mod ast;
-mod dynasm;
-mod parse;
+mod compile;
 mod context;
+mod dynasm;
+mod errors;
 mod instr;
+mod jit;
+mod parse;
 mod types;
 
-use std::env;
-use std::fs::File;
-use std::io::prelude::*;
-use std::io;
-use std::io::{ErrorKind, Error};
+use ast::{Expr, SnekFn};
+use compile::compile_to_instrs;
+use context::FnDefs;
+use context::{CompilerContext, LabelNumGenerator, SharedContext};
+use errors::{CompileError, HomogenousBind, ParseError, RuntimeError, TypeError};
+use instr::{Instr, Loc, OpCode, Val, CAST_ERROR, OVERFLOW_ERROR, TYPE_ERROR};
+use jit::{EaterOfWords, ReturnValue};
+use parse::{parse_expr, parse_fn};
 use sexp::Atom::*;
 use sexp::*;
-use ast::{Expr, SnekFn};
-use instr::{Instr, Val, Loc, OpCode, TYPE_ERROR, OVERFLOW_ERROR, CAST_ERROR};
-use context::{SharedContext, CompilerContext, LabelNumGenerator};
-use jit::{EaterOfWords, ReturnValue};
-use compile::compile_to_instrs;
-use errors::{RuntimeError, CompileError, ParseError, HomogenousBind, TypeError};
-use parse::{parse_expr, parse_fn};
-use types::{Type, tc};
-use context::FnDefs;
+use std::env;
+use std::fs::File;
+use std::io;
+use std::io::prelude::*;
+use std::io::{Error, ErrorKind};
+use types::{leq, tc, Type};
 
 use dynasmrt::x64::Rq;
-
 
 enum ExprKind {
     Normal(Expr),
     Define(String, Expr),
-    Function(SnekFn)
+    Function(SnekFn),
 }
 
 fn usage_message(filename: &String) {
@@ -43,21 +42,21 @@ fn usage_message(filename: &String) {
     println!("    -e: evaluate code in FILE, write to stdout");
     println!("    -g: evaluate code in FILE, write to stdout. Then, ");
     println!("        compile FILE and write results to OPTIONAL_FILE.");
-
 }
 
 fn parse_repl(s: &Sexp) -> Result<ExprKind, ParseError> {
     match s {
         sexp @ Sexp::List(vec) => match &vec[..] {
-            [Sexp::Atom(S(op_name)), Sexp::Atom(S(id)), e] if op_name == "define"
-                => Ok(ExprKind::Define(id.to_string(), parse_expr(&e)?)),
+            [Sexp::Atom(S(op_name)), Sexp::Atom(S(id)), e] if op_name == "define" => {
+                Ok(ExprKind::Define(id.to_string(), parse_expr(&e)?))
+            }
             [Sexp::Atom(S(fun)), ..] if fun == "fun" => {
                 let snekfn = parse_fn(sexp)?;
                 Ok(ExprKind::Function(snekfn))
             }
             _ => Ok(ExprKind::Normal(parse_expr(&sexp)?)),
         },
-        e => Ok(ExprKind::Normal(parse_expr(&e)?))
+        e => Ok(ExprKind::Normal(parse_expr(&e)?)),
     }
 }
 
@@ -127,17 +126,21 @@ fn read_file(file: &mut File) -> Result<String, std::io::Error> {
 fn parse_sexp(s: String) -> Result<Sexp, std::io::Error> {
     match parse(&s) {
         Ok(sexp) => Ok(sexp),
-        Err(e) => Err(Error::new(ErrorKind::Other, format!("sexp error: {:?}", e)))
+        Err(e) => Err(Error::new(ErrorKind::Other, format!("sexp error: {:?}", e))),
     }
 }
 
 // returns std::io::Error because i'm not sure what to do with this error yet.
 // TODO: better error reporting from JIT failure. future commit.
-fn consume_dynasm(emitter: &mut EaterOfWords, name: String, mut instrs: Vec<Instr>) -> Result<&mut EaterOfWords, std::io::Error> {
+fn consume_dynasm(
+    emitter: &mut EaterOfWords,
+    name: String,
+    mut instrs: Vec<Instr>,
+) -> Result<&mut EaterOfWords, std::io::Error> {
     instrs.push(Instr::Ret);
     match emitter.consume(name, instrs) {
         Some(()) => Ok(emitter),
-        None => Err(Error::new(ErrorKind::Other, format!("Dynasm failed.")))
+        None => Err(Error::new(ErrorKind::Other, format!("Dynasm failed."))),
     }
 }
 
@@ -161,11 +164,18 @@ fn snek_format(val: ReturnValue) -> Result<(), std::io::Error> {
 }
 
 fn create_block(name: &str, instrs: &[Instr]) -> String {
-    let code: String = instrs.iter().map(Instr::to_string).collect::<Vec<String>>().join("\n");
+    let code: String = instrs
+        .iter()
+        .map(Instr::to_string)
+        .collect::<Vec<String>>()
+        .join("\n");
     format!("\n{}:\n{}", name, code)
 }
 
-fn exert_repl(emitter: &mut EaterOfWords, vals: &mut Vec<i64>) -> Result<ReturnValue, RuntimeError> {
+fn exert_repl(
+    emitter: &mut EaterOfWords,
+    vals: &mut Vec<i64>,
+) -> Result<ReturnValue, RuntimeError> {
     emitter.digest();
     let pi: *mut i64 = vals.as_mut_ptr();
     let res = emitter.exert(Some(pi));
@@ -173,13 +183,22 @@ fn exert_repl(emitter: &mut EaterOfWords, vals: &mut Vec<i64>) -> Result<ReturnV
     res
 }
 
-fn compile_fn_maybe(fm: SnekFn, base_context: CompilerContext) -> Result<(String, Vec<Instr>), CompileError> {
-    let SnekFn{name, args, body, fn_type: _} = fm;
+fn compile_fn_maybe(
+    fm: SnekFn,
+    base_context: CompilerContext,
+) -> Result<(String, Vec<Instr>), CompileError> {
+    let SnekFn {
+        name,
+        args,
+        body,
+        fn_type: _,
+    } = fm;
 
     let mut loc_fn_context = base_context;
     let mut loc_value_map = loc_fn_context.value_map;
     for (arg, _) in args.into_iter() {
-        loc_value_map = loc_value_map.update(arg, Val::Place(Loc::Offset(Rq::RSP, loc_fn_context.si)));
+        loc_value_map =
+            loc_value_map.update(arg, Val::Place(Loc::Offset(Rq::RSP, loc_fn_context.si)));
         loc_fn_context.si -= 8;
     }
 
@@ -191,10 +210,9 @@ fn compile_fn_maybe(fm: SnekFn, base_context: CompilerContext) -> Result<(String
 }
 
 fn create_fn_tc_env(defs: &Vec<(String, Type)>) -> im::HashMap<String, Type> {
-    defs.iter()
-        .fold(im::HashMap::new(), |acc, (name, t)| {
-            acc.update(name.clone(), *t)
-        })
+    defs.iter().fold(im::HashMap::new(), |acc, (name, t)| {
+        acc.update(name.clone(), *t)
+    })
 }
 
 fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool) {
@@ -228,10 +246,12 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
         let sexp_maybe = parse(&input.trim());
         input.clear();
 
-
         // 3. create context
-        let local_map = define_vals.iter()
-            .fold(context.value_map.clone(), |acc, (key, val)| acc.update(key.to_string(), *val));
+        let local_map = define_vals
+            .iter()
+            .fold(context.value_map.clone(), |acc, (key, val)| {
+                acc.update(key.to_string(), *val)
+            });
 
         let local_context = CompilerContext {
             value_map: local_map,
@@ -250,7 +270,9 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                     // }
 
                     if is_typed {
-                        if let Err(e) = main_tc(&e, &start_env, &local_context.shared.function_definitions) {
+                        if let Err(e) =
+                            main_tc(&e, &start_env, &local_context.shared.function_definitions)
+                        {
                             eprintln!("{}", std::io::Error::from(e).to_string());
                             continue;
                         }
@@ -266,9 +288,10 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                             let (val, t): (i64, Type) = match retval {
                                 ReturnValue::Num(i) => (i << 1, Type::Num),
                                 ReturnValue::Bool(true) => (3, Type::Bool),
-                                ReturnValue::Bool(false) => (1, Type::Bool)
+                                ReturnValue::Bool(false) => (1, Type::Bool),
                             };
-                            define_vals = define_vals.update(id.clone(), Val::Place(Loc::Offset(Rq::RDI, place)));
+                            define_vals = define_vals
+                                .update(id.clone(), Val::Place(Loc::Offset(Rq::RDI, place)));
                             place += 8;
                             define_vec.push(val);
                             if is_typed {
@@ -276,7 +299,7 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                             }
                         }
                     }
-                },
+                }
                 Ok(ExprKind::Function(f)) => {
                     if functions.contains_key(&*f.name) {
                         eprintln!("ERR: function {} already exists.", f.name);
@@ -287,7 +310,8 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         let f_args = f.args.clone();
                         // let f_args: im::HashSet<String> = f.args.iter().fold(im::HashSet::new(),
                         //     |acc, a| acc.update(a.to_string()));
-                        let tentative_functions = functions.update(f.name.clone(), (f_args, f.fn_type));
+                        let tentative_functions =
+                            functions.update(f.name.clone(), (f_args, f.fn_type));
 
                         if is_typed {
                             // typecheck environment using function args
@@ -301,12 +325,12 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
 
                             match main_tc(&f.body, &fn_env, &tentative_functions) {
                                 Ok(e_type) => {
-                                    if e_type == fn_type {
-                                        // println!("Function will evaluate to: {}", e_type.to_string());
-                                    }
-                                    else {
+                                    if !leq(e_type, fn_type) {
                                         let err = TypeError::TypeMismatch(fn_type, e_type);
                                         eprintln!("{}", std::io::Error::from(err).to_string());
+                                        continue;
+                                    } else {
+                                        // println!("Function will evaluate to: {}", e_type.to_string());
                                     }
                                 }
                                 Err(e) => {
@@ -352,12 +376,18 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         ..local_context.clone()
                     };
                     if is_typed {
-                        if let Err(e) = main_tc(&e, &start_env, &local_context.shared.function_definitions) {
+                        if let Err(e) =
+                            main_tc(&e, &start_env, &local_context.shared.function_definitions)
+                        {
                             eprintln!("{}", std::io::Error::from(e).to_string());
                             continue;
                         }
                     }
-                    let base = vec![Instr::TwoArg(OpCode::IMov, Loc::Reg(Rq::RBP), Val::Place(Loc::Reg(Rq::RSP)))];
+                    let base = vec![Instr::TwoArg(
+                        OpCode::IMov,
+                        Loc::Reg(Rq::RBP),
+                        Val::Place(Loc::Reg(Rq::RSP)),
+                    )];
                     let res = compile_to_instrs(&e, local_context, base)
                         .map_err(std::io::Error::from) // enter the io ecosystem
                         .bind(|vec| consume_dynasm(&mut emitter, code_label, vec))
@@ -366,22 +396,21 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                     if let Err(e) = res {
                         eprintln!("{}", e);
                     }
-                },
+                }
                 Err(parse_error) => {
                     eprintln!("parse error: {:?}", parse_error);
                     continue;
                 }
-            }
+            },
             Err(e) if e.message.contains("unexpected eof") => {
                 println!("Goodbye!");
                 return;
-            },
+            }
             Err(e) => {
                 println!("Error parsing S-Expression: {:?}", e);
                 continue;
             }
         };
-
     }
 }
 
@@ -399,30 +428,43 @@ fn parse_input_opt(input: &String) -> Option<i64> {
         "true" => Some(3),
         "false" => Some(1),
         e => match e.parse::<i64>() {
-            Ok(i) => Some(i<<1),
-            _ => None
-        }
+            Ok(i) => Some(i << 1),
+            _ => None,
+        },
     }
 }
 
-fn write_aot(functions: &[(String, Vec<Instr>)], our_code: &[Instr], mut file: File) -> Result<(), std::io::Error> {
+fn write_aot(
+    functions: &[(String, Vec<Instr>)],
+    our_code: &[Instr],
+    mut file: File,
+) -> Result<(), std::io::Error> {
     let overflow_err = create_block("overflow_error", &OVERFLOW_ERROR[..]);
     let type_err = create_block("type_error", &TYPE_ERROR[..]);
     let cast_err = create_block("cast_error", &CAST_ERROR[..]);
     const BASE: &str = "section .text\nextern snek_print\nglobal our_code_starts_here";
 
-    let fn_blocks = functions.into_iter().map(|(name, body)| create_block(&*name, &body[..]));
+    let fn_blocks = functions
+        .into_iter()
+        .map(|(name, body)| create_block(&*name, &body[..]));
     let ourcode_block = create_block("our_code_starts_here", our_code);
 
     file.write_all(BASE.as_bytes())?;
     file.write_all(overflow_err.as_bytes())?;
     file.write_all(type_err.as_bytes())?;
     file.write_all(cast_err.as_bytes())?;
-    fn_blocks.into_iter().try_for_each(|e| file.write_all(e.as_bytes()))?;
+    fn_blocks
+        .into_iter()
+        .try_for_each(|e| file.write_all(e.as_bytes()))?;
     file.write_all(ourcode_block.as_bytes())
 }
 
-fn run_jit(functions: &[(String, Vec<Instr>)], our_code: &[Instr], input: Option<i64>, mut emitter: EaterOfWords) -> Result<ReturnValue, RuntimeError> {
+fn run_jit(
+    functions: &[(String, Vec<Instr>)],
+    our_code: &[Instr],
+    input: Option<i64>,
+    mut emitter: EaterOfWords,
+) -> Result<ReturnValue, RuntimeError> {
     // 0. consume errors
     emitter.consume_slice("type_error".to_string(), &TYPE_ERROR[..]);
     emitter.consume_slice("overflow_error".to_string(), &OVERFLOW_ERROR[..]);
@@ -450,7 +492,7 @@ fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
     if let None = args.get(1) {
         usage_message(&args[0]);
-        return Ok(())
+        return Ok(());
     }
 
     // mode
@@ -477,15 +519,14 @@ fn main() -> std::io::Result<()> {
         Mode::Aot => args.get(4),
         Mode::Both => args.get(4),
         Mode::Typecheck => None,
-    }.and_then(parse_input_opt);
+    }
+    .and_then(parse_input_opt);
 
     // files to write to (or not!)
     let (in_file, out_file) = match (mode, args.get(2), args.get(3)) {
-        (Mode::Aot, Some(f1), Some(f2)) =>
-            (Some(File::open(f1)?), Some(File::create(f2)?)),
+        (Mode::Aot, Some(f1), Some(f2)) => (Some(File::open(f1)?), Some(File::create(f2)?)),
         (Mode::Jit, Some(f1), _) => (Some(File::open(f1)?), None),
-        (Mode::Both, Some(f1), Some(f2)) =>
-            (Some(File::open(f1)?), Some(File::create(f2)?)),
+        (Mode::Both, Some(f1), Some(f2)) => (Some(File::open(f1)?), Some(File::create(f2)?)),
         (Mode::Repl, None, None) => (None, None),
         (Mode::Typecheck, Some(f1), None) => (Some(File::open(f1)?), None),
         _ => {
@@ -519,33 +560,46 @@ fn main() -> std::io::Result<()> {
         .and_then(parse_sexp)
         .and_then(|s| match s {
             Sexp::List(vec) => Ok(vec),
-            _ => Err(Error::new(ErrorKind::Other, "Could not create a proper list of s-expressions."))
+            _ => Err(Error::new(
+                ErrorKind::Other,
+                "Could not create a proper list of s-expressions.",
+            )),
         })?;
 
     let top_lvl = program.pop().unwrap();
 
-    let snek_fns = program.iter()
+    let snek_fns = program
+        .iter()
         .map(|s| parse_fn(s))
         .collect::<Result<Vec<SnekFn>, ParseError>>()?;
 
-    let function_definitions: FnDefs = snek_fns.iter().try_fold(im::HashMap::new(),
-        |acc, snekfn| {
-            let SnekFn{name, args, body: _, fn_type: t} = snekfn;
-            if acc.contains_key(name) {
-                return Err(CompileError::FnDup(name.clone()));
-            }
+    let function_definitions: FnDefs =
+        snek_fns
+            .iter()
+            .try_fold(im::HashMap::new(), |acc, snekfn| {
+                let SnekFn {
+                    name,
+                    args,
+                    body: _,
+                    fn_type: t,
+                } = snekfn;
+                if acc.contains_key(name) {
+                    return Err(CompileError::FnDup(name.clone()));
+                }
 
-            // TODO: move this check somewhere else.
-            args.iter().try_fold(im::HashSet::new(), |acc, (a, _)| if acc.contains(a) {
-                Err(CompileError::FnDupArg(name.to_string(), a.to_string()))
-            } else {
-                Ok(acc.update(a.to_string()))
+                // TODO: move this check somewhere else.
+                args.iter().try_fold(im::HashSet::new(), |acc, (a, _)| {
+                    if acc.contains(a) {
+                        Err(CompileError::FnDupArg(name.to_string(), a.to_string()))
+                    } else {
+                        Ok(acc.update(a.to_string()))
+                    }
+                })?;
+
+                emitter.prep_fn(name.clone());
+
+                Ok(acc.update(name.to_string(), (args.clone(), *t)))
             })?;
-
-            emitter.prep_fn(name.clone());
-
-            Ok(acc.update(name.to_string(), (args.clone(), *t)))
-        })?;
 
     let top_lvl_expr = parse_expr(&top_lvl)?;
 
@@ -556,7 +610,7 @@ fn main() -> std::io::Result<()> {
             let (defs, _) = &function_definitions[&*snekfn.name];
             let start_env = create_fn_tc_env(defs);
             let fn_tc = main_tc(&snekfn.body, &start_env, &function_definitions)?;
-            if fn_tc != snekfn.fn_type {
+            if !leq(fn_tc, snekfn.fn_type) {
                 // using TypeMismatch for when the expression DOES typecheck, but
                 //  not to the right type. Should use it for something else later.
                 return Err(TypeError::TypeMismatch(snekfn.fn_type, fn_tc).into());
@@ -567,7 +621,7 @@ fn main() -> std::io::Result<()> {
             _ if mode == Mode::Aot || mode == Mode::Typecheck => Type::Any,
             None => Type::Nothing,
             Some(i) if i & 1 == 1 => Type::Bool,
-            _ => Type::Num
+            _ => Type::Num,
         };
         let empty_env = im::HashMap::new().update("input".to_string(), input_type);
         let top_tc = main_tc(&top_lvl_expr, &empty_env, &function_definitions)?;
@@ -577,7 +631,6 @@ fn main() -> std::io::Result<()> {
             println!("Program will evaluate to: {}", top_tc.to_string());
         }
     }
-
 
     let shared_context = SharedContext::default(&label_gen, function_definitions, None);
     let top_lvl_context = CompilerContext::new(&shared_context, has_input);
@@ -607,8 +660,13 @@ fn main() -> std::io::Result<()> {
     let fns = fns;
 
     // compile top level expression
-    let first_instr = vec!(Instr::TwoArg(OpCode::IMov, Loc::Reg(Rq::RBP), Val::Place(Loc::Reg(Rq::RSP))));
-    let mut our_code_instrs: Vec<Instr> = compile_to_instrs(&top_lvl_expr, top_lvl_context, first_instr)?;
+    let first_instr = vec![Instr::TwoArg(
+        OpCode::IMov,
+        Loc::Reg(Rq::RBP),
+        Val::Place(Loc::Reg(Rq::RSP)),
+    )];
+    let mut our_code_instrs: Vec<Instr> =
+        compile_to_instrs(&top_lvl_expr, top_lvl_context, first_instr)?;
     our_code_instrs.push(Instr::Ret);
 
     // once again "freeze" our_code_instrs so i can't accidentally mutate it later
@@ -619,14 +677,12 @@ fn main() -> std::io::Result<()> {
         Mode::Typecheck => Ok(()), // do nothing
         Mode::Repl => {
             panic!("this shouldn't happen")
-        },
-        Mode::Jit => {
-            snek_format(run_jit(&fns[..], &our_code_instrs[..], input, emitter)?)
-        },
+        }
+        Mode::Jit => snek_format(run_jit(&fns[..], &our_code_instrs[..], input, emitter)?),
         Mode::Aot => {
             let dst_file = out_file.unwrap();
             write_aot(&fns[..], &our_code_instrs[..], dst_file)
-        },
+        }
         Mode::Both => {
             // do aot
             write_aot(&fns[..], &our_code_instrs[..], out_file.unwrap())?;
