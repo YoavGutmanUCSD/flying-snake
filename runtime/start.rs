@@ -13,6 +13,7 @@ pub extern "C" fn snek_print(i: i64) -> i64 {
             match (i >> 3) & 7 {
                 0 => eprintln!("Invalid arguments to one or more functions."),
                 1 => eprintln!("Integer overflow."),
+                2 => eprintln!("Bad cast."),
                 _ => eprintln!("Unknown error")
             }
         },
