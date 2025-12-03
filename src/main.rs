@@ -7,8 +7,8 @@ mod dynasm;
 mod errors;
 mod instr;
 mod jit;
+mod optimize;
 mod parse;
-mod typed_ast;
 mod types;
 
 use ast::{Expr, SnekFn};
@@ -26,7 +26,7 @@ use std::fs::File;
 use std::io;
 use std::io::prelude::*;
 use std::io::{Error, ErrorKind};
-use types::{leq, tc, Type};
+use types::{tc, Type};
 
 use dynasmrt::x64::Rq;
 
@@ -326,7 +326,7 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
 
                             match main_tc(&f.body, &fn_env, &tentative_functions) {
                                 Ok(e_type) => {
-                                    if !leq(e_type, fn_type) {
+                                    if !(e_type <= fn_type) {
                                         let err = TypeError::TypeMismatch(fn_type, e_type);
                                         eprintln!("{}", std::io::Error::from(err).to_string());
                                         continue;
@@ -611,7 +611,7 @@ fn main() -> std::io::Result<()> {
             let (defs, _) = &function_definitions[&*snekfn.name];
             let start_env = create_fn_tc_env(defs);
             let fn_tc = main_tc(&snekfn.body, &start_env, &function_definitions)?;
-            if !leq(fn_tc, snekfn.fn_type) {
+            if !(fn_tc <= snekfn.fn_type) {
                 // using TypeMismatch for when the expression DOES typecheck, but
                 //  not to the right type. Should use it for something else later.
                 return Err(TypeError::TypeMismatch(snekfn.fn_type, fn_tc).into());
