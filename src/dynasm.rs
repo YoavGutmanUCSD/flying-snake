@@ -198,7 +198,9 @@ pub fn i2a_slice(
     label_map: &HashMap<String, DynamicLabel>,
 ) -> Option<()> {
     for i in instrs {
-        if instr_to_asm(ops, i, label_map).is_none() { println!("[ERR] we got it right here: {}", i.to_string()) }
+        if instr_to_asm(ops, i, label_map).is_none() {
+            println!("[ERR] we got it right here: {}", i.to_string())
+        }
     }
     Some(())
 }

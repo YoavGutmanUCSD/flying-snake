@@ -1,9 +1,14 @@
 use crate::instr::{Loc, Val};
 use crate::types::Type;
+use crate::validate::ast::StackVar;
 use dynasmrt::x64::Rq;
 use im::hashset::HashSet;
 use im::HashMap;
 use std::cell::Cell;
+
+pub const KEYWORDS: &[&str] = &[
+    "let", "if", "break", "loop", "+", "-", "*", "=", "<", ">", "<=", ">=", "set!", "block", "fun",
+];
 
 pub type FnDefs = im::HashMap<String, (Vec<(String, Type)>, Type)>;
 
@@ -28,6 +33,7 @@ impl LabelNumGenerator {
 #[derive(Clone)]
 pub struct CompilerContext<'a> {
     pub value_map: HashMap<String, Val>,
+    pub symbol_map: HashMap<StackVar, Val>,
     pub si: i32,
     pub enclosing_loop_label: Option<String>,
     pub shared: &'a SharedContext<'a>,
@@ -45,31 +51,18 @@ pub struct SharedContext<'a> {
 }
 
 impl<'a> SharedContext<'a> {
+    pub fn keyword_set() -> HashSet<String> {
+        KEYWORDS.iter().map(|kw| kw.to_string()).collect()
+    }
+
     pub fn default(
         label_gen: &'a LabelNumGenerator,
         function_definitions: FnDefs,
         fn_name: Option<String>,
     ) -> SharedContext<'a> {
-        let keywords: HashSet<String> = HashSet::from_iter([
-            "let".to_string(),
-            "if".to_string(),
-            "break".to_string(),
-            "loop".to_string(),
-            "+".to_string(),
-            "-".to_string(),
-            "*".to_string(),
-            "=".to_string(),
-            "<".to_string(),
-            ">".to_string(),
-            "<=".to_string(),
-            ">=".to_string(),
-            "set!".to_string(),
-            "block".to_string(),
-            "fun".to_string(),
-        ]);
         SharedContext {
             label_gen,
-            keywords,
+            keywords: SharedContext::keyword_set(),
             type_err_label: "type_error".to_string(),
             overflow_err_label: "overflow_error".to_string(),
             cast_err_label: "cast_error".to_string(),
@@ -98,6 +91,7 @@ impl<'a> CompilerContext<'a> {
         CompilerContext {
             si: -2 * 8,
             value_map,
+            symbol_map: HashMap::new(),
             enclosing_loop_label: None,
             shared: shared_context,
         }

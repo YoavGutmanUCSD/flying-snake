@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::{
     ast::{Op1, Op2},
     types::Type,
