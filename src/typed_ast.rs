@@ -6,39 +6,39 @@ use crate::types::Type::*;
 use crate::types::{leq, union};
 use im::HashMap;
 
-enum TypedExpr<T> {
-    Number(T, i64),
-    Boolean(T, bool),
-    Id(T, String),
-    Let(T, Vec<(String, T, TypedExpr<T>)>, Box<TypedExpr<T>>),
-    UnOp(T, Op1, Box<TypedExpr<T>>),
-    BinOp(T, Op2, Box<TypedExpr<T>>, Box<TypedExpr<T>>),
-    If(T, Box<TypedExpr<T>>, Box<TypedExpr<T>>, Box<TypedExpr<T>>),
-    Loop(T, Box<TypedExpr<T>>),
-    Break(T, Box<TypedExpr<T>>),
-    Set(T, String, Box<TypedExpr<T>>),
-    Block(T, Vec<TypedExpr<T>>),
-    Call(T, String, Vec<TypedExpr<T>>),
-    Print(T, Box<TypedExpr<T>>),
-    Cast(T, Box<TypedExpr<T>>, Type),
+enum TypedExpr {
+    Number(Type, i64),
+    Boolean(Type, bool),
+    Id(Type, String),
+    Let(Type, Vec<(String, Type, TypedExpr)>, Box<TypedExpr>),
+    UnOp(Type, Op1, Box<TypedExpr>),
+    BinOp(Type, Op2, Box<TypedExpr>, Box<TypedExpr>),
+    If(Type, Box<TypedExpr>, Box<TypedExpr>, Box<TypedExpr>),
+    Loop(Type, Box<TypedExpr>),
+    Break(Type, Box<TypedExpr>),
+    Set(Type, String, Box<TypedExpr>),
+    Block(Type, Vec<TypedExpr>),
+    Call(Type, String, Vec<TypedExpr>),
+    Print(Type, Box<TypedExpr>),
+    Cast(Type, Box<TypedExpr>),
 }
 
-fn get_type<T>(e: &TypedExpr<T>) -> &T {
+fn get_type(e: &TypedExpr) -> Type {
     match e {
-        TypedExpr::Number(t, ..) => t,
-        TypedExpr::Boolean(t, ..) => t,
-        TypedExpr::Id(t, ..) => t,
-        TypedExpr::Let(t, ..) => t,
-        TypedExpr::UnOp(t, ..) => t,
-        TypedExpr::BinOp(t, ..) => t,
-        TypedExpr::If(t, ..) => t,
-        TypedExpr::Loop(t, ..) => t,
-        TypedExpr::Break(t, ..) => t,
-        TypedExpr::Set(t, ..) => t,
-        TypedExpr::Block(t, ..) => t,
-        TypedExpr::Call(t, ..) => t,
-        TypedExpr::Print(t, ..) => t,
-        TypedExpr::Cast(t, ..) => t,
+        TypedExpr::Number(t, ..) => *t,
+        TypedExpr::Boolean(t, ..) => *t,
+        TypedExpr::Id(t, ..) => *t,
+        TypedExpr::Let(t, ..) => *t,
+        TypedExpr::UnOp(t, ..) => *t,
+        TypedExpr::BinOp(t, ..) => *t,
+        TypedExpr::If(t, ..) => *t,
+        TypedExpr::Loop(t, ..) => *t,
+        TypedExpr::Break(t, ..) => *t,
+        TypedExpr::Set(t, ..) => *t,
+        TypedExpr::Block(t, ..) => *t,
+        TypedExpr::Call(t, ..) => *t,
+        TypedExpr::Print(t, ..) => *t,
+        TypedExpr::Cast(t, ..) => *t,
     }
 }
 
@@ -48,7 +48,7 @@ fn strictify(
     e: Expr,
     env: &HashMap<String, Type>,
     fn_env: &FnDefs,
-) -> Result<(TypedExpr<Type>, Type), TypeError> {
+) -> Result<(TypedExpr, Type), TypeError> {
     match e {
         Expr::Number(i) => Ok((TypedExpr::Number(Num, i), Nothing)),
         Expr::Boolean(b) => Ok((TypedExpr::Boolean(Bool, b), Nothing)),
@@ -58,7 +58,7 @@ fn strictify(
         },
         Expr::UnOp(op, e) => {
             let (typed_e, e_breaks) = strictify(*e, env, fn_env)?;
-            let e_type = *get_type(&typed_e);
+            let e_type = get_type(&typed_e);
             let final_type = match op {
                 Op1::Add1 | Op1::Sub1 => {
                     if leq(e_type, Num) {
@@ -75,8 +75,8 @@ fn strictify(
         Expr::BinOp(op, e1, e2) => {
             let (typed_e1, e1_breaks) = strictify(*e1, env, fn_env)?;
             let (typed_e2, e2_breaks) = strictify(*e2, env, fn_env)?;
-            let e1_type = *get_type(&typed_e1);
-            let e2_type = *get_type(&typed_e2);
+            let e1_type = get_type(&typed_e1);
+            let e2_type = get_type(&typed_e2);
             let break_subtype = union(e1_breaks, e2_breaks);
             let both_nothing = e1_type == Nothing && e2_type == Nothing;
             let final_base_type = match op {
@@ -119,13 +119,13 @@ fn strictify(
             let mut typed_bindings = Vec::with_capacity(bindings.len());
             for (id, id_expr) in bindings.into_iter() {
                 let (typed_id_expr, id_breaks) = strictify(id_expr, &new_env, fn_env)?;
-                let id_type = *get_type(&typed_id_expr);
+                let id_type = get_type(&typed_id_expr);
                 new_env = new_env.update(id.to_string(), id_type);
                 break_type = union(id_breaks, break_type);
                 typed_bindings.push((id, id_type, typed_id_expr));
             }
             let (typed_e, e_breaks) = strictify(*e, &new_env, fn_env)?;
-            let e_type = *get_type(&typed_e);
+            let e_type = get_type(&typed_e);
             let final_typed_e = TypedExpr::Let(e_type, typed_bindings, Box::new(typed_e));
             Ok((final_typed_e, union(e_breaks, break_type)))
         }
@@ -134,13 +134,13 @@ fn strictify(
             let (typed_e1, e1_breaks) = strictify(*e1, env, fn_env)?;
             let (typed_e2, e2_breaks) = strictify(*e2, env, fn_env)?;
 
-            let econd_type = *get_type(&typed_econd);
+            let econd_type = get_type(&typed_econd);
             if econd_type != Bool {
                 return Err(TypeError::DoesNotTC);
             }
 
-            let e1_type = *get_type(&typed_e1);
-            let e2_type = *get_type(&typed_e2);
+            let e1_type = get_type(&typed_e1);
+            let e2_type = get_type(&typed_e2);
             let break_type = union(econd_breaks, union(e1_breaks, e2_breaks));
             let final_type = union(e1_type, e2_type);
 
@@ -164,7 +164,7 @@ fn strictify(
         }
         Expr::Set(id, e) => {
             let (typed_e, e_break) = strictify(*e, env, fn_env)?;
-            let e_type = *get_type(&typed_e);
+            let e_type = get_type(&typed_e);
             if let Some(id_type) = env.get(&*id) {
                 if !leq(e_type, *id_type) {
                     return Err(TypeError::TypeMismatch(*id_type, e_type));
@@ -190,7 +190,7 @@ fn strictify(
                 block_break_type = union(block_break_type, e_breaks);
                 typed_exprs.push(typed_e);
             }
-            let last_type = *get_type(&typed_exprs[typed_exprs.len() - 1]);
+            let last_type = get_type(&typed_exprs[typed_exprs.len() - 1]);
             let final_expr = TypedExpr::Block(last_type, typed_exprs);
             Ok((final_expr, block_break_type))
         }
@@ -221,7 +221,7 @@ fn strictify(
                 };
 
                 let (typed_a, a_breaks) = strictify(a, env, fn_env)?;
-                let a_type = *get_type(&typed_a);
+                let a_type = get_type(&typed_a);
                 if !leq(a_type, *expected_t) {
                     return Err(TypeError::TypeMismatch(*expected_t, a_type));
                 }
@@ -235,14 +235,14 @@ fn strictify(
         }
         Expr::Print(e) => {
             let (typed_e, e_breaks) = strictify(*e, env, fn_env)?;
-            let final_expr = TypedExpr::Print(*get_type(&typed_e), Box::new(typed_e));
+            let final_expr = TypedExpr::Print(get_type(&typed_e), Box::new(typed_e));
             Ok((final_expr, e_breaks))
         }
         Expr::Cast(e, expected_type) => {
             let (typed_e, e_breaks) = strictify(*e, env, fn_env)?;
 
             // it turns out we are supposed to assume the expected type is correct
-            let final_expr = TypedExpr::Cast(expected_type, Box::new(typed_e), expected_type);
+            let final_expr = TypedExpr::Cast(expected_type, Box::new(typed_e));
             Ok((final_expr, e_breaks))
         }
     }
