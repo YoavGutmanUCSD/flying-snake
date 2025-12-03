@@ -1,37 +1,51 @@
 use std::collections::HashMap;
 
-use crate::{context::FnDefs, errors::TypeError, types::Type};
+use crate::{
+    context::FnDefs,
+    errors::TypeError,
+    types::Type,
+    validate::ast::{BindingSymbol, StackVar},
+};
 
 pub struct StrictifyCtx {
-    env: HashMap<String, Type>,
+    env: HashMap<StackVar, Type>,
     fn_env: FnDefs,
     loop_break_types: Vec<Vec<Type>>,
+    input_type: Option<Type>,
 }
 
 impl StrictifyCtx {
-    pub fn new(env: &im::HashMap<String, Type>, fn_env: &FnDefs) -> Self {
+    pub fn new(
+        env: &im::HashMap<StackVar, Type>,
+        fn_env: &FnDefs,
+        input_type: Option<Type>,
+    ) -> Self {
         Self {
-            env: env.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+            env: env.iter().map(|(k, v)| (*k, *v)).collect(),
             fn_env: fn_env.clone(),
             loop_break_types: vec![],
+            input_type,
         }
     }
 
-    pub(super) fn get_id_type(&self, id: &str) -> Option<Type> {
-        self.env.get(id).copied()
+    pub(super) fn get_symbol_type(&self, symbol: &BindingSymbol) -> Option<Type> {
+        self.env.get(&symbol.id).copied()
     }
 
-    /// Returns the existing type before the update, if this `id` corresponds to a type.
-    pub(super) fn update_env(&mut self, id: &str, type_: Type) -> Option<Type> {
-        self.env.insert(id.to_string(), type_)
+    pub(super) fn bind_symbol(&mut self, symbol: &BindingSymbol, type_: Type) {
+        self.env.insert(symbol.id, type_);
     }
 
-    pub(super) fn remove_binding(&mut self, id: &str) {
-        self.env.remove(id);
+    pub(super) fn unbind_symbol(&mut self, symbol: &BindingSymbol) {
+        self.env.remove(&symbol.id);
     }
 
     pub(super) fn get_fn(&self, name: &str) -> Option<&(Vec<(String, Type)>, Type)> {
         self.fn_env.get(name)
+    }
+
+    pub(super) fn input_type(&self) -> Option<Type> {
+        self.input_type
     }
 
     pub(super) fn with_loop<T, F>(&mut self, f: F) -> (T, Type)

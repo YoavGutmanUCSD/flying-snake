@@ -1,12 +1,10 @@
 use crate::ast::{Op1, Op2};
+use crate::checks::Check;
 use crate::types::Type;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct StackVar(pub u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct LoopLabel(pub u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SymbolKind {
@@ -40,7 +38,6 @@ pub struct ValidatedBinding {
 #[derive(Clone, Debug)]
 pub struct ValidatedCall {
     pub name: String,
-    pub expected_arity: usize,
     pub args: Vec<ValidatedExpr>,
 }
 
@@ -51,11 +48,11 @@ pub enum ValidatedExpr {
     Symbol(BindingSymbol),
     Input,
     Let(Vec<ValidatedBinding>, Box<ValidatedExpr>),
-    UnOp(Op1, Box<ValidatedExpr>),
-    BinOp(Op2, Box<ValidatedExpr>, Box<ValidatedExpr>),
+    UnOp(Check<1>, Op1, Box<ValidatedExpr>),
+    BinOp(Check<2>, Op2, Box<ValidatedExpr>, Box<ValidatedExpr>),
     If(Box<ValidatedExpr>, Box<ValidatedExpr>, Box<ValidatedExpr>),
-    Loop(LoopLabel, Box<ValidatedExpr>),
-    Break(LoopLabel, Box<ValidatedExpr>),
+    Loop(Box<ValidatedExpr>),
+    Break(Box<ValidatedExpr>),
     Set(BindingSymbol, Box<ValidatedExpr>),
     Block(Vec<ValidatedExpr>),
     Call(ValidatedCall),

@@ -1,5 +1,5 @@
 use crate::instr::{BranchCode, Instr, JumpDst, Loc, OpCode, Val};
-use dynasmrt::x64::Rq::*;
+// `Rq` macros are provided by dynasm at macro expansion time, so no explicit import is needed.
 use dynasmrt::{dynasm, DynamicLabel, DynasmApi, DynasmLabelApi};
 use std::collections::HashMap;
 
@@ -122,19 +122,14 @@ fn jmp_to_asm(
     dst: &JumpDst,
     label_table: &HashMap<String, DynamicLabel>,
 ) -> Option<()> {
-    match (branch, dst) {
-        (BranchCode::Jmp, JumpDst::Pointer(RAX)) => dynasm!(ops ; .arch x64 ; jmp rax),
-        (_, JumpDst::Label(l)) => match label_table.get(l) {
-            Some(label_true) => match branch {
-                BranchCode::Jmp => dynasm!(ops ; .arch x64 ; jmp => *label_true),
-                BranchCode::Je => dynasm!(ops ; .arch x64 ; je => *label_true),
-                BranchCode::Jne => dynasm!(ops ; .arch x64 ; jne => *label_true),
-                BranchCode::Jo => dynasm!(ops ; .arch x64 ; jo => *label_true),
-            },
-            None => return None,
-        },
-        _ => return None,
-    };
+    let JumpDst::Label(label_name) = dst;
+    let label_true = label_table.get(label_name)?;
+    match branch {
+        BranchCode::Jmp => dynasm!(ops ; .arch x64 ; jmp => *label_true),
+        BranchCode::Je => dynasm!(ops ; .arch x64 ; je => *label_true),
+        BranchCode::Jne => dynasm!(ops ; .arch x64 ; jne => *label_true),
+        BranchCode::Jo => dynasm!(ops ; .arch x64 ; jo => *label_true),
+    }
     Some(())
 }
 
@@ -184,9 +179,12 @@ pub fn instr_to_asm(
             }
         }
         Instr::CallPrint(reg) => {
-            dynasm!(ops ; .arch x64
-                ; mov Rq(*reg as u8), QWORD snek_print as _
-                ; call Rq(*reg as u8))
+            #[allow(clippy::fn_to_numeric_cast)]
+            {
+                dynasm!(ops ; .arch x64
+                    ; mov Rq(*reg as u8), QWORD snek_print as _
+                    ; call Rq(*reg as u8))
+            }
         }
     }
     Some(())

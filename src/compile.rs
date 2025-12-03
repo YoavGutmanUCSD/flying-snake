@@ -57,15 +57,17 @@ pub fn compile_validated_expr(
             }
             Ok(base)
         }
-        ValidatedExpr::UnOp(op, e1) => {
+        ValidatedExpr::UnOp(checks, op, e1) => {
             let type_err_label = context.shared.type_err_label.clone();
             let overflow_err_label = context.shared.overflow_err_label.clone();
             let mut base = compile_validated_expr(e1, context, base)?;
             match op {
                 Op1::Add1 => {
-                    let typecheck =
-                        type_check_loc(Loc::Reg(RAX), type_err_label.clone(), BranchCode::Jne);
-                    base.extend(typecheck);
+                    if checks.is_enabled(0) {
+                        let typecheck =
+                            type_check_loc(Loc::Reg(RAX), type_err_label.clone(), BranchCode::Jne);
+                        base.extend(typecheck);
+                    }
                     base.push(Instr::TwoArg(OpCode::IAdd, Loc::Reg(RAX), Val::Imm(2)));
                     base.push(Instr::Jump(
                         BranchCode::Jo,
@@ -73,9 +75,11 @@ pub fn compile_validated_expr(
                     ));
                 }
                 Op1::Sub1 => {
-                    let typecheck =
-                        type_check_loc(Loc::Reg(RAX), type_err_label.clone(), BranchCode::Jne);
-                    base.extend(typecheck);
+                    if checks.is_enabled(0) {
+                        let typecheck =
+                            type_check_loc(Loc::Reg(RAX), type_err_label.clone(), BranchCode::Jne);
+                        base.extend(typecheck);
+                    }
                     base.push(Instr::TwoArg(OpCode::ISub, Loc::Reg(RAX), Val::Imm(2)));
                     base.push(Instr::Jump(
                         BranchCode::Jo,
@@ -105,7 +109,7 @@ pub fn compile_validated_expr(
             }
             Ok(base)
         }
-        ValidatedExpr::BinOp(op, e1, e2) => {
+        ValidatedExpr::BinOp(checks, op, e1, e2) => {
             let e1_instr = compile_validated_expr(e1, context.clone(), Vec::new())?;
             let e2_context = CompilerContext {
                 si: context.si - 8,
@@ -122,37 +126,43 @@ pub fn compile_validated_expr(
             let overflow_err_label = context.shared.overflow_err_label.clone();
             let type_err_label = context.shared.type_err_label.clone();
             if let Op2::Equal = op {
-                base.push(Instr::TwoArg(
-                    OpCode::IMov,
-                    Loc::Offset(RSP, context.si - 8),
-                    Val::Place(Loc::Reg(RAX)),
-                ));
-                base.push(Instr::TwoArg(
-                    OpCode::IXor,
-                    Loc::Reg(RAX),
-                    Val::Place(Loc::Offset(RSP, context.si)),
-                ));
-                base.push(Instr::TwoArg(OpCode::ITest, Loc::Reg(RAX), Val::Imm(1)));
-                base.push(Instr::Jump(
-                    BranchCode::Jne,
-                    JumpDst::Label(type_err_label.clone()),
-                ));
-                base.push(Instr::TwoArg(
-                    OpCode::IMov,
-                    Loc::Reg(RAX),
-                    Val::Place(Loc::Offset(RSP, context.si - 8)),
-                ));
+                if checks.is_enabled(0) {
+                    base.push(Instr::TwoArg(
+                        OpCode::IMov,
+                        Loc::Offset(RSP, context.si - 8),
+                        Val::Place(Loc::Reg(RAX)),
+                    ));
+                    base.push(Instr::TwoArg(
+                        OpCode::IXor,
+                        Loc::Reg(RAX),
+                        Val::Place(Loc::Offset(RSP, context.si)),
+                    ));
+                    base.push(Instr::TwoArg(OpCode::ITest, Loc::Reg(RAX), Val::Imm(1)));
+                    base.push(Instr::Jump(
+                        BranchCode::Jne,
+                        JumpDst::Label(type_err_label.clone()),
+                    ));
+                    base.push(Instr::TwoArg(
+                        OpCode::IMov,
+                        Loc::Reg(RAX),
+                        Val::Place(Loc::Offset(RSP, context.si - 8)),
+                    ));
+                }
             } else {
-                base.extend(type_check_loc(
-                    Loc::Reg(RAX),
-                    type_err_label.clone(),
-                    BranchCode::Jne,
-                ));
-                base.extend(type_check_loc(
-                    Loc::Offset(RSP, context.si),
-                    type_err_label,
-                    BranchCode::Jne,
-                ));
+                if checks.is_enabled(0) {
+                    base.extend(type_check_loc(
+                        Loc::Reg(RAX),
+                        type_err_label.clone(),
+                        BranchCode::Jne,
+                    ));
+                }
+                if checks.is_enabled(1) {
+                    base.extend(type_check_loc(
+                        Loc::Offset(RSP, context.si),
+                        type_err_label,
+                        BranchCode::Jne,
+                    ));
+                }
             }
             match op {
                 Op2::Plus => {
@@ -323,7 +333,7 @@ pub fn compile_validated_expr(
             base.extend(binding_instrs);
             compile_validated_expr(body, context, base)
         }
-        ValidatedExpr::Loop(_, body) => {
+        ValidatedExpr::Loop(body) => {
             let loop_label_ind = context.shared.label_gen.get();
             let loop_start = format!("_loop_start_{}", loop_label_ind);
             let loop_end = format!("_loop_end_{}", loop_label_ind);
@@ -341,7 +351,7 @@ pub fn compile_validated_expr(
             base.push(Instr::Label(loop_end));
             Ok(base)
         }
-        ValidatedExpr::Break(_, e) => {
+        ValidatedExpr::Break(e) => {
             if let Some(label) = context.enclosing_loop_label {
                 let e_context = CompilerContext {
                     enclosing_loop_label: None,

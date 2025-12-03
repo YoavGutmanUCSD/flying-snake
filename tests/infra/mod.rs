@@ -117,8 +117,9 @@ fn run_success_test_with_typecheck(
     if !failed_flags.is_empty() {
         for (flag, actual_trim, raw) in &failed_flags {
             eprintln!(
-                "Flag {} unexpected output:\n{}",
+                "Flag {} unexpected output (got `{}`):\n{}",
                 flag,
+                actual_trim,
                 prettydiff::diff_lines(raw, expected_trim)
             );
         }
@@ -324,7 +325,7 @@ pub(crate) fn run_repl_sequence_test(
             if let (Some(start), Some(end)) = (match_start, match_end) {
                 let matched_content = remaining[start..end].trim().to_string();
                 found_outputs.push(matched_content);
-                current_pos = current_pos + end;
+                current_pos += end;
             } else {
                 eprintln!(
                     "[repl_test] Internal error extracting match for {:?}\nFull output:\n{}",
@@ -377,7 +378,7 @@ fn run_repl_with_timeout(commands: &[&str], timeout_ms: u64, typecheck: bool) ->
             stdin.flush().unwrap();
             thread::sleep(Duration::from_millis(100));
         }
-        writeln!(stdin, "").unwrap();
+        writeln!(stdin).unwrap();
         stdin.flush().unwrap();
     }
 

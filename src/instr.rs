@@ -42,7 +42,6 @@ pub enum BranchCode {
 
 pub enum JumpDst {
     Label(String),
-    Pointer(Rq),
 }
 
 pub enum Instr {
@@ -96,7 +95,6 @@ impl ToString for JumpDst {
     fn to_string(&self) -> String {
         match self {
             JumpDst::Label(name) => name.to_string(),
-            JumpDst::Pointer(reg) => as_string(reg),
         }
     }
 }
@@ -220,10 +218,4 @@ impl ToString for Instr {
     }
 }
 
-pub fn instrs_to_str(is: &Vec<Instr>) -> String {
-    is.iter()
-        .map(|i| i.to_string())
-        .collect::<Vec<String>>()
-        .join("\n")
-}
 // END instrs

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::context::{FnDefs, KEYWORDS};
 use crate::errors::CompileError;
-use crate::validate::ast::{BindingSymbol, LoopLabel, StackVar, SymbolKind};
+use crate::validate::ast::{BindingSymbol, StackVar, SymbolKind};
 
 #[derive(Default)]
 pub struct SymbolFactory {
@@ -24,8 +24,7 @@ impl SymbolFactory {
 
 pub struct ValidateCtx<'a> {
     pub(crate) scopes: Vec<HashMap<String, BindingSymbol>>,
-    loop_stack: Vec<LoopLabel>,
-    next_loop: u32,
+    loop_depth: usize,
     symbol_factory: SymbolFactory,
     keywords: std::collections::HashSet<String>,
     fn_defs: &'a FnDefs,
@@ -48,8 +47,7 @@ impl<'a> ValidateCtx<'a> {
         let scopes = vec![HashMap::new()];
         let mut ctx = Self {
             scopes,
-            loop_stack: Vec::new(),
-            next_loop: 0,
+            loop_depth: 0,
             symbol_factory: SymbolFactory::with_start(next_symbol_id),
             keywords: KEYWORDS.iter().map(|kw| kw.to_string()).collect(),
             fn_defs,
@@ -112,19 +110,18 @@ impl<'a> ValidateCtx<'a> {
         }
     }
 
-    pub fn push_loop(&mut self) -> LoopLabel {
-        let label = LoopLabel(self.next_loop);
-        self.next_loop += 1;
-        self.loop_stack.push(label);
-        label
+    pub fn push_loop(&mut self) {
+        self.loop_depth += 1;
     }
 
     pub fn pop_loop(&mut self) {
-        self.loop_stack.pop();
+        if self.loop_depth > 0 {
+            self.loop_depth -= 1;
+        }
     }
 
-    pub fn current_loop(&self) -> Option<LoopLabel> {
-        self.loop_stack.last().copied()
+    pub fn in_loop(&self) -> bool {
+        self.loop_depth > 0
     }
 
     pub fn functions(&self) -> &'a FnDefs {

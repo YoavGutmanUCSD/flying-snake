@@ -47,7 +47,6 @@ pub struct SharedContext<'a> {
     pub overflow_err_label: String,
     pub cast_err_label: String,
     pub function_definitions: FnDefs,
-    pub fn_name: Option<String>,
 }
 
 impl<'a> SharedContext<'a> {
@@ -58,7 +57,6 @@ impl<'a> SharedContext<'a> {
     pub fn default(
         label_gen: &'a LabelNumGenerator,
         function_definitions: FnDefs,
-        fn_name: Option<String>,
     ) -> SharedContext<'a> {
         SharedContext {
             label_gen,
@@ -67,7 +65,6 @@ impl<'a> SharedContext<'a> {
             overflow_err_label: "overflow_error".to_string(),
             cast_err_label: "cast_error".to_string(),
             function_definitions,
-            fn_name,
         }
     }
 }

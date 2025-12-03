@@ -1,6 +1,7 @@
 // You can add as many files as you want
 
 mod ast;
+mod checks;
 mod compile;
 mod context;
 mod dynasm;
@@ -29,7 +30,7 @@ use std::io;
 use std::io::prelude::*;
 use std::io::Error;
 use types::Type;
-use validate::ast::{BindingSymbol, StackVar, SymbolKind};
+use validate::ast::{BindingSymbol, StackVar, SymbolKind, ValidatedExpr};
 use validate::{
     validate_expr, validate_expr_with_bindings, validate_function_body, ValidatedFunction,
     ValidationInputs,
@@ -136,10 +137,16 @@ fn exert_repl(
     res
 }
 
-fn create_fn_tc_env(defs: &[(String, Type)]) -> im::HashMap<String, Type> {
-    defs.iter().fold(im::HashMap::new(), |acc, (name, t)| {
-        acc.update(name.clone(), *t)
-    })
+fn create_fn_tc_env(
+    params: &[BindingSymbol],
+    defs: &[(String, Type)],
+) -> im::HashMap<StackVar, Type> {
+    params
+        .iter()
+        .zip(defs.iter())
+        .fold(im::HashMap::new(), |acc, (symbol, (_, t))| {
+            acc.update(symbol.id, *t)
+        })
 }
 
 fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool) {
@@ -157,7 +164,7 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
     let mut functions: FnDefs = im::HashMap::new();
 
     // map: define'd variable name -> variable type
-    let mut start_env = im::HashMap::new();
+    let mut start_symbol_env = im::HashMap::new();
 
     loop {
         // 0. print little > character
@@ -231,9 +238,12 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                     };
 
                     if is_typed {
-                        if let Err(e) =
-                            main_tc(&e, &start_env, &branch_context.shared.function_definitions)
-                        {
+                        if let Err(e) = main_tc(
+                            &validated,
+                            &start_symbol_env,
+                            &branch_context.shared.function_definitions,
+                            None,
+                        ) {
                             eprintln!("{}", std::io::Error::from(e));
                             continue;
                         }
@@ -265,7 +275,7 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                             place += 8;
                             define_vec.push(val);
                             if is_typed {
-                                start_env = start_env.update(id, t);
+                                start_symbol_env = start_symbol_env.update(symbol.id, t);
                             }
                         }
                     }
@@ -298,17 +308,17 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
 
                         if is_typed {
                             // typecheck environment using function args
-                            let args_env = create_fn_tc_env(fn_defs);
+                            let args_env = create_fn_tc_env(&validated_fn.params, fn_defs);
 
-                            // union of args_env and start_env
+                            // union of args_env and global bindings
                             let mut fn_env = args_env;
-                            for (id, t) in &start_env {
-                                fn_env = fn_env.update(id.to_string(), *t);
+                            for (symbol, t) in start_symbol_env.iter() {
+                                fn_env = fn_env.update(*symbol, *t);
                             }
 
-                            match main_tc(&f.body, &fn_env, &tentative_functions) {
+                            match main_tc(&validated_fn.body, &fn_env, &tentative_functions, None) {
                                 Ok(e_type) => {
-                                    if !(e_type <= fn_type) {
+                                    if !e_type.is_subtype_of(fn_type) {
                                         let err = TypeError::TypeMismatch(fn_type, e_type);
                                         eprintln!("{}", std::io::Error::from(err));
                                         continue;
@@ -329,7 +339,6 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         // create fn context
                         let shared_fn_context = SharedContext {
                             function_definitions: functions.clone(),
-                            fn_name: Some(f.name.clone()),
                             ..local_context.shared.clone()
                         };
                         let fn_context = CompilerContext {
@@ -380,9 +389,12 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         }
                     };
                     if is_typed {
-                        if let Err(e) =
-                            main_tc(&e, &start_env, &local_context.shared.function_definitions)
-                        {
+                        if let Err(e) = main_tc(
+                            &validated,
+                            &start_symbol_env,
+                            &local_context.shared.function_definitions,
+                            None,
+                        ) {
                             eprintln!("{}", std::io::Error::from(e));
                             continue;
                         }
@@ -487,8 +499,13 @@ fn run_jit(
     exert(&mut emitter, input)
 }
 
-fn main_tc(e: &Expr, env: &im::HashMap<String, Type>, fn_env: &FnDefs) -> Result<Type, TypeError> {
-    let typed = strictify_expr(e.clone(), env, fn_env)?;
+fn main_tc(
+    e: &ValidatedExpr,
+    env: &im::HashMap<StackVar, Type>,
+    fn_env: &FnDefs,
+    input_type: Option<Type>,
+) -> Result<Type, TypeError> {
+    let typed = strictify_expr(e.clone(), env, fn_env, input_type)?;
     Ok(typed.type_())
 }
 
@@ -546,7 +563,7 @@ fn main() -> std::io::Result<()> {
 
     // REPL dispatch
     if let Mode::Repl = mode {
-        let shared_context = SharedContext::default(&label_gen, im::HashMap::new(), None);
+        let shared_context = SharedContext::default(&label_gen, im::HashMap::new());
         let top_lvl_context = CompilerContext::new(&shared_context, has_input);
         emitter.consume_slice("type_error".to_string(), &TYPE_ERROR[..]);
         emitter.consume_slice("overflow_error".to_string(), &OVERFLOW_ERROR[..]);
@@ -618,7 +635,7 @@ fn main() -> std::io::Result<()> {
     }
 
     let allow_input_for_validation = has_input || matches!(mode, Mode::Typecheck);
-    let validated_top_expr = validate_expr(
+    let mut validated_top_expr = validate_expr(
         &top_lvl_expr,
         ValidationInputs {
             fn_defs: &function_definitions,
@@ -629,26 +646,37 @@ fn main() -> std::io::Result<()> {
 
     // do typecheck here. short circuit on failure.
     if is_typed {
-        // 1. typecheck all functions
-        for (snekfn, _) in validated_fns.iter() {
+        // 1. typecheck all functions and replace their validated bodies with strictified output
+        for (snekfn, validated_fn) in validated_fns.iter_mut() {
             let (defs, _) = &function_definitions[&*snekfn.name];
-            let start_env = create_fn_tc_env(defs);
-            let fn_tc = main_tc(&snekfn.body, &start_env, &function_definitions)?;
-            if !(fn_tc <= snekfn.fn_type) {
-                // using TypeMismatch for when the expression DOES typecheck, but
-                //  not to the right type. Should use it for something else later.
-                return Err(TypeError::TypeMismatch(snekfn.fn_type, fn_tc).into());
+            let fn_env = create_fn_tc_env(&validated_fn.params, defs);
+            let typed_body = strictify_expr(
+                validated_fn.body.clone(),
+                &fn_env,
+                &function_definitions,
+                None,
+            )?;
+            if !typed_body.type_().is_subtype_of(snekfn.fn_type) {
+                return Err(TypeError::TypeMismatch(snekfn.fn_type, typed_body.type_()).into());
             }
+            validated_fn.body = typed_body.into();
         }
-        // 2. typecheck top level (keep type)
+        // 2. typecheck top level (keep type) and use strictified output for compilation
         let input_type = match input {
             _ if mode == Mode::Aot || mode == Mode::Typecheck => Type::Any,
             None => Type::Nothing,
             Some(i) if i & 1 == 1 => Type::Bool,
             _ => Type::Num,
         };
-        let empty_env = im::HashMap::new().update("input".to_string(), input_type);
-        let top_tc = main_tc(&top_lvl_expr, &empty_env, &function_definitions)?;
+        let empty_env: im::HashMap<StackVar, Type> = im::HashMap::new();
+        let typed_top = strictify_expr(
+            validated_top_expr.clone(),
+            &empty_env,
+            &function_definitions,
+            Some(input_type),
+        )?;
+        let top_tc = typed_top.type_();
+        validated_top_expr = typed_top.into();
 
         // 3. print type if -t
         if mode == Mode::Typecheck {
@@ -656,7 +684,7 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    let shared_context = SharedContext::default(&label_gen, function_definitions, None);
+    let shared_context = SharedContext::default(&label_gen, function_definitions);
     let top_lvl_context = CompilerContext::new(&shared_context, has_input);
 
     let fn_context = CompilerContext {
@@ -667,9 +695,7 @@ fn main() -> std::io::Result<()> {
     // compile all functions into blocks that end with 'ret'
     let mut fns = Vec::with_capacity(validated_fns.len());
     for (snekfn, validated_body) in validated_fns.into_iter() {
-        let fn_name = Some(snekfn.name.clone());
         let new_shared_context = SharedContext {
-            fn_name,
             ..shared_context.clone()
         };
         let new_context = CompilerContext {

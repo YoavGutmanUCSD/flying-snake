@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::ast::Expr;
+use crate::checks::Check;
 use crate::context::FnDefs;
 use crate::errors::CompileError;
 use crate::validate::ast::{
@@ -75,12 +76,17 @@ fn validate(expr: &Expr, ctx: &mut ValidateCtx<'_>) -> Result<ValidatedExpr, Com
         Expr::Let(bindings, body) => validate_let(bindings, body, ctx),
         Expr::UnOp(op, inner) => {
             let value = validate(inner, ctx)?;
-            Ok(ValidatedExpr::UnOp(*op, Box::new(value)))
+            Ok(ValidatedExpr::UnOp(Check::all_true(), *op, Box::new(value)))
         }
         Expr::BinOp(op, lhs, rhs) => {
             let left = validate(lhs, ctx)?;
             let right = validate(rhs, ctx)?;
-            Ok(ValidatedExpr::BinOp(*op, Box::new(left), Box::new(right)))
+            Ok(ValidatedExpr::BinOp(
+                Check::all_true(),
+                *op,
+                Box::new(left),
+                Box::new(right),
+            ))
         }
         Expr::If(cond, then_e, else_e) => {
             let cond_v = validate(cond, ctx)?;
@@ -93,19 +99,18 @@ fn validate(expr: &Expr, ctx: &mut ValidateCtx<'_>) -> Result<ValidatedExpr, Com
             ))
         }
         Expr::Loop(body) => {
-            let label = ctx.push_loop();
-            let result =
-                validate(body, ctx).map(|body_v| ValidatedExpr::Loop(label, Box::new(body_v)));
+            ctx.push_loop();
+            let result = validate(body, ctx).map(|body_v| ValidatedExpr::Loop(Box::new(body_v)));
             ctx.pop_loop();
             result
         }
-        Expr::Break(value) => match ctx.current_loop() {
-            None => Err(CompileError::NoBreakTarget),
-            Some(label) => {
-                let value_v = validate(value, ctx)?;
-                Ok(ValidatedExpr::Break(label, Box::new(value_v)))
+        Expr::Break(value) => {
+            if !ctx.in_loop() {
+                return Err(CompileError::NoBreakTarget);
             }
-        },
+            let value_v = validate(value, ctx)?;
+            Ok(ValidatedExpr::Break(Box::new(value_v)))
+        }
         Expr::Set(name, expr) => {
             if ctx.is_keyword(name) {
                 return Err(CompileError::SetKeyword);
@@ -159,7 +164,6 @@ fn validate_call(
     }
     Ok(ValidatedExpr::Call(ValidatedCall {
         name: name.to_string(),
-        expected_arity: expected,
         args: validated_args,
     }))
 }

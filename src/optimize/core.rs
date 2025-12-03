@@ -1,31 +1,39 @@
 use im::HashMap;
 
-use crate::ast::{Expr, Op1, Op2};
+use crate::ast::{Op1, Op2};
 use crate::context::FnDefs;
 use crate::errors::TypeError;
 use crate::types::{Type, Type::*};
+use crate::validate::ast::{StackVar, ValidatedCall, ValidatedExpr};
 
-use super::ast::{TypedExpr as TExpr, TypedExpr_::*};
+use super::ast::{TypedBinding, TypedCall, TypedExpr as TExpr, TypedExpr_::*};
 use super::context::StrictifyCtx;
 
 pub fn strictify_expr(
-    expr: Expr,
-    env: &HashMap<String, Type>,
+    expr: ValidatedExpr,
+    env: &HashMap<StackVar, Type>,
     fn_env: &FnDefs,
+    input_type: Option<Type>,
 ) -> Result<TExpr, TypeError> {
-    let mut ctx = StrictifyCtx::new(env, fn_env);
+    let mut ctx = StrictifyCtx::new(env, fn_env, input_type);
     strictify(expr, &mut ctx)
 }
 
-fn strictify(e: Expr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeError> {
+fn strictify(e: ValidatedExpr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeError> {
     match e {
-        Expr::Number(num) => Ok(TExpr(Number(num), Num)),
-        Expr::Boolean(val) => Ok(TExpr(Boolean(val), Bool)),
-        Expr::Id(id) => match ctx.get_id_type(&id) {
-            None => Err(TypeError::UntypedIdentifier(id)),
-            Some(id_type) => Ok(TExpr(Id(id), id_type)),
+        ValidatedExpr::Number(num) => Ok(TExpr(Number(num), Num)),
+        ValidatedExpr::Boolean(val) => Ok(TExpr(Boolean(val), Bool)),
+        ValidatedExpr::Symbol(symbol) => {
+            let id_type = ctx
+                .get_symbol_type(&symbol)
+                .expect("strictify: validated symbols must be bound");
+            Ok(TExpr(Symbol(symbol), id_type))
+        }
+        ValidatedExpr::Input => match ctx.input_type() {
+            Some(input_type) => Ok(TExpr(Input, input_type)),
+            None => Err(TypeError::UntypedIdentifier("input".to_string())),
         },
-        Expr::UnOp(op, e) => {
+        ValidatedExpr::UnOp(checks, op, e) => {
             let expr = strictify(*e, ctx)?;
             let result_type = match op {
                 Op1::Add1 | Op1::Sub1 => {
@@ -37,10 +45,10 @@ fn strictify(e: Expr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeError> {
                 }
                 Op1::IsBool | Op1::IsNum => Bool,
             };
-            let typed_expr = TExpr(UnOp(op, Box::new(expr)), result_type);
+            let typed_expr = TExpr(UnOp(checks, op, Box::new(expr)), result_type);
             Ok(typed_expr)
         }
-        Expr::BinOp(op, e1, e2) => {
+        ValidatedExpr::BinOp(checks, op, e1, e2) => {
             let lhs = strictify(*e1, ctx)?;
             let rhs = strictify(*e2, ctx)?;
             let result_type = if matches!((lhs.type_(), rhs.type_()), (Nothing, Nothing)) {
@@ -72,36 +80,35 @@ fn strictify(e: Expr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeError> {
                     }
                 }
             };
-            let typed_expr = TExpr(BinOp(op, Box::new(lhs), Box::new(rhs)), result_type);
+            let typed_expr = TExpr(BinOp(checks, op, Box::new(lhs), Box::new(rhs)), result_type);
             Ok(typed_expr)
         }
-        Expr::Let(bindings, body) => {
+        ValidatedExpr::Let(bindings, body) => {
             let mut typed_bindings = Vec::with_capacity(bindings.len());
-            let mut saved_env = Vec::with_capacity(bindings.len());
+            let mut bound_symbols = Vec::with_capacity(bindings.len());
 
-            for (name, binding_expr) in bindings.into_iter() {
-                let typed_expr = strictify(binding_expr, ctx)?;
-                let prev = ctx.update_env(&name, typed_expr.type_());
-                typed_bindings.push((name.clone(), typed_expr));
-                saved_env.push((name, prev));
+            for binding in bindings.into_iter() {
+                let symbol = binding.symbol.clone();
+                let typed_expr = strictify(binding.value, ctx)?;
+                ctx.bind_symbol(&symbol, typed_expr.type_());
+                bound_symbols.push(symbol.clone());
+                typed_bindings.push(TypedBinding {
+                    symbol,
+                    value: typed_expr,
+                });
             }
 
             let typed_body = strictify(*body, ctx)?;
             let body_type = typed_body.type_();
 
-            for (name, prev) in saved_env {
-                match prev {
-                    Some(old) => {
-                        ctx.update_env(&name, old);
-                    }
-                    None => ctx.remove_binding(&name),
-                }
+            for symbol in bound_symbols.into_iter() {
+                ctx.unbind_symbol(&symbol);
             }
 
             let typed_expr = TExpr(Let(typed_bindings, Box::new(typed_body)), body_type);
             Ok(typed_expr)
         }
-        Expr::If(cond, then_e, else_e) => {
+        ValidatedExpr::If(cond, then_e, else_e) => {
             let cond_typed = strictify(*cond, ctx)?;
             if cond_typed.type_() != Bool {
                 return Err(TypeError::DoesNotTC);
@@ -121,34 +128,33 @@ fn strictify(e: Expr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeError> {
             );
             Ok(typed_expr)
         }
-        Expr::Loop(body) => {
+        ValidatedExpr::Loop(body) => {
             let (body_res, loop_break_type) = ctx.with_loop(|ctx| strictify(*body, ctx));
             let typed_body = body_res?;
             let typed_expr = TExpr(Loop(Box::new(typed_body)), loop_break_type);
             Ok(typed_expr)
         }
-        Expr::Break(e) => {
+        ValidatedExpr::Break(e) => {
             let value = strictify(*e, ctx)?;
             let break_type = value.type_();
             ctx.add_break(break_type)?;
             Ok(TExpr(Break(Box::new(value)), Nothing))
         }
-        Expr::Set(id, value_expr) => {
+        ValidatedExpr::Set(symbol, value_expr) => {
             let typed_value = strictify(*value_expr, ctx)?;
             let value_type = typed_value.type_();
-            if let Some(id_type) = ctx.get_id_type(&id) {
-                if value_type <= id_type {
-                    // ok
-                } else {
-                    return Err(TypeError::TypeMismatch(id_type, value_type));
-                }
+            let id_type = ctx
+                .get_symbol_type(&symbol)
+                .expect("strictify: set target must be bound");
+            if value_type <= id_type {
+                // ok
             } else {
-                return Err(TypeError::DoesNotTC);
+                return Err(TypeError::TypeMismatch(id_type, value_type));
             }
-            let typed_expr = TExpr(Set(id, Box::new(typed_value)), value_type);
+            let typed_expr = TExpr(Set(symbol, Box::new(typed_value)), value_type);
             Ok(typed_expr)
         }
-        Expr::Block(exprs) => {
+        ValidatedExpr::Block(exprs) => {
             if exprs.is_empty() {
                 return Ok(TExpr(Block(Vec::new()), Nothing));
             }
@@ -165,11 +171,11 @@ fn strictify(e: Expr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeError> {
                 .unwrap_or(Nothing);
             Ok(TExpr(Block(typed_exprs), block_type))
         }
-        Expr::Call(fname, args) => {
+        ValidatedExpr::Call(ValidatedCall { name, args }) => {
             let (param_types, return_type) = ctx
-                .get_fn(&fname)
+                .get_fn(&name)
                 .cloned()
-                .ok_or_else(|| TypeError::UnboundFunctionNoType(fname.clone()))?;
+                .ok_or_else(|| TypeError::UnboundFunctionNoType(name.clone()))?;
 
             if param_types.len() != args.len() {
                 return Err(TypeError::DoesNotTC);
@@ -186,14 +192,20 @@ fn strictify(e: Expr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeError> {
                 typed_args.push(typed_arg);
             }
 
-            Ok(TExpr(Call(fname, typed_args), return_type))
+            Ok(TExpr(
+                Call(TypedCall {
+                    name,
+                    args: typed_args,
+                }),
+                return_type,
+            ))
         }
-        Expr::Print(e) => {
+        ValidatedExpr::Print(e) => {
             let typed_e = strictify(*e, ctx)?;
             let result_type = typed_e.type_();
             Ok(TExpr(Print(Box::new(typed_e)), result_type))
         }
-        Expr::Cast(e, expected_type) => {
+        ValidatedExpr::Cast(e, expected_type) => {
             let typed_e = strictify(*e, ctx)?;
             Ok(TExpr(Cast(Box::new(typed_e)), expected_type))
         }

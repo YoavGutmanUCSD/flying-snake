@@ -47,6 +47,13 @@ impl Type {
             _ => Any,
         }
     }
+
+    pub fn is_subtype_of(self, other: Type) -> bool {
+        matches!(
+            self.partial_cmp(&other),
+            Some(Ordering::Less | Ordering::Equal)
+        )
+    }
 }
 
 // Historical `tc` checker has been superseded by `optimize::strictify_expr`.

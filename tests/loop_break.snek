@@ -1,0 +1,9 @@
+(let ((n 0)
+      (sum 0))
+  (loop
+    (block
+      (set! sum (+ sum n))
+      (set! n (+ n 1))
+        (if (>= n 6)
+          (break sum)
+          0))))
