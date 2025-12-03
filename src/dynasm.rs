@@ -17,7 +17,7 @@ fn snek_print(i: i64) -> i64 {
         }
         _ => eprintln!("Unknown error"),
     }
-    return i;
+    i
 }
 
 pub fn update_label_table(
@@ -27,7 +27,7 @@ pub fn update_label_table(
 ) {
     for i in is {
         if let Instr::Label(label) = i {
-            if let None = table.get(label) {
+            if table.get(label).is_none() {
                 let label_real = ops.new_dynamic_label();
                 table.insert(label.to_string(), label_real);
             }
@@ -135,7 +135,7 @@ fn jmp_to_asm(
         },
         _ => return None,
     };
-    return Some(());
+    Some(())
 }
 
 pub fn instr_to_asm(
@@ -189,7 +189,7 @@ pub fn instr_to_asm(
                 ; call Rq(*reg as u8))
         }
     }
-    return Some(());
+    Some(())
 }
 
 pub fn i2a_slice(
@@ -198,10 +198,7 @@ pub fn i2a_slice(
     label_map: &HashMap<String, DynamicLabel>,
 ) -> Option<()> {
     for i in instrs {
-        match instr_to_asm(ops, i, &label_map) {
-            None => println!("[ERR] we got it right here: {}", i.to_string()),
-            _ => (),
-        }
+        if instr_to_asm(ops, i, label_map).is_none() { println!("[ERR] we got it right here: {}", i.to_string()) }
     }
     Some(())
 }

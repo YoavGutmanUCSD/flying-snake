@@ -23,9 +23,9 @@ pub fn compile_to_instrs(
             base.push(Instr::TwoArg(
                 OpCode::IMov,
                 Loc::Reg(RAX),
-                Val::Imm((*i << 1) as i64),
+                Val::Imm(*i << 1),
             ));
-            return Ok(base);
+            Ok(base)
         }
         Expr::Boolean(b) => {
             if *b {
@@ -33,22 +33,22 @@ pub fn compile_to_instrs(
             } else {
                 base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), Val::Imm(1)));
             }
-            return Ok(base);
+            Ok(base)
         }
         Expr::Id(name) => {
-            if context.shared.fn_name != None && name == "input" {
+            if context.shared.fn_name.is_some() && name == "input" {
                 return Err(CompileError::IllegalInput(name.clone()));
             };
             match context.value_map.get(name) {
                 Some(val) => base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), *val)),
                 None => return Err(CompileError::UnboundIdentifier(name.to_string())),
             }
-            return Ok(base);
+            Ok(base)
         }
         Expr::UnOp(op, e1) => {
             let type_err_label = context.shared.type_err_label.clone();
             let overflow_err_label = context.shared.overflow_err_label.clone();
-            let mut base = compile_to_instrs(&e1, context, base)?;
+            let mut base = compile_to_instrs(e1, context, base)?;
             match op {
                 // only do these if equal
                 Op1::Add1 => {
@@ -105,17 +105,17 @@ pub fn compile_to_instrs(
                 }
             }
             // hoping for tail call optimization here
-            return Ok(base);
+            Ok(base)
         }
         Expr::BinOp(op, e1, e2) => {
             // 1. compile e1
-            let e1_instr: Vec<Instr> = compile_to_instrs(&e1, context.clone(), Vec::new())?;
+            let e1_instr: Vec<Instr> = compile_to_instrs(e1, context.clone(), Vec::new())?;
             // 2. compile e2
             let e2_context = CompilerContext {
                 si: context.si - 8,
                 ..context.clone()
             };
-            let e2_instr: Vec<Instr> = compile_to_instrs(&e2, e2_context, Vec::new())?;
+            let e2_instr: Vec<Instr> = compile_to_instrs(e2, e2_context, Vec::new())?;
             // 3. insert e1 instructions
             base.extend(e1_instr);
             // 4. mov e1 result (rax) to stack ptr
@@ -313,17 +313,17 @@ pub fn compile_to_instrs(
         }
         Expr::If(econd, e1, e2) => {
             // 1. compile econd
-            let econd_instr: Vec<Instr> = compile_to_instrs(&econd, context.clone(), Vec::new())?;
+            let econd_instr: Vec<Instr> = compile_to_instrs(econd, context.clone(), Vec::new())?;
 
             // 2. compile e1
-            let e1_instr: Vec<Instr> = compile_to_instrs(&e1, context.clone(), Vec::new())?;
+            let e1_instr: Vec<Instr> = compile_to_instrs(e1, context.clone(), Vec::new())?;
 
             // 3. compile e2
             let e2_context = CompilerContext {
                 si: context.si - 8,
                 ..context.clone()
             };
-            let e2_instr: Vec<Instr> = compile_to_instrs(&e2, e2_context, Vec::new())?;
+            let e2_instr: Vec<Instr> = compile_to_instrs(e2, e2_context, Vec::new())?;
 
             // labels for later
             let label_ind = context.shared.label_gen.get();
@@ -387,7 +387,7 @@ pub fn compile_to_instrs(
                 context.si -= 8;
             }
             base.extend(binding_instrs);
-            return compile_to_instrs(e, context, base);
+            compile_to_instrs(e, context, base)
         }
 
         /* for loop and break, add new map to function to keep track of loop breakout label
@@ -455,11 +455,7 @@ pub fn compile_to_instrs(
                     let e_instrs = compile_to_instrs(e, context.clone(), Vec::new())?;
 
                     base.extend(e_instrs);
-                    base.push(Instr::TwoArg(
-                        OpCode::IMov,
-                        loc.clone(),
-                        Val::Place(Loc::Reg(RAX)),
-                    ));
+                    base.push(Instr::TwoArg(OpCode::IMov, *loc, Val::Place(Loc::Reg(RAX))));
 
                     Ok(base)
                 }
@@ -554,7 +550,7 @@ pub fn compile_to_instrs(
         Expr::Print(expr) => {
             let si = context.si;
             // let after_label = format!("_after_print_{}", context.label_gen.get());
-            let e_instrs = compile_to_instrs(&expr, context, Vec::new())?;
+            let e_instrs = compile_to_instrs(expr, context, Vec::new())?;
             base.extend(e_instrs);
 
             // push rdi

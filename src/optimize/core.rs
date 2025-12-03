@@ -8,7 +8,6 @@ use crate::types::{Type, Type::*};
 use super::ast::{TypedExpr as TExpr, TypedExpr_::*};
 use super::context::StrictifyCtx;
 
-#[allow(dead_code)]
 pub fn strictify_expr(
     expr: Expr,
     env: &HashMap<String, Type>,
@@ -18,7 +17,6 @@ pub fn strictify_expr(
     strictify(expr, &mut ctx)
 }
 
-#[allow(dead_code)]
 fn strictify(e: Expr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeError> {
     match e {
         Expr::Number(num) => Ok(TExpr(Number(num), Num)),

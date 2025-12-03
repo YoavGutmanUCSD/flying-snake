@@ -18,6 +18,7 @@ use context::{CompilerContext, LabelNumGenerator, SharedContext};
 use errors::{CompileError, HomogenousBind, ParseError, RuntimeError, TypeError};
 use instr::{Instr, Loc, OpCode, Val, CAST_ERROR, OVERFLOW_ERROR, TYPE_ERROR};
 use jit::{EaterOfWords, ReturnValue};
+use optimize::strictify_expr;
 use parse::{parse_expr, parse_fn};
 use sexp::Atom::*;
 use sexp::*;
@@ -25,8 +26,8 @@ use std::env;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
-use std::io::{Error, ErrorKind};
-use types::{tc, Type};
+use std::io::Error;
+use types::Type;
 
 use dynasmrt::x64::Rq;
 
@@ -49,15 +50,15 @@ fn parse_repl(s: &Sexp) -> Result<ExprKind, ParseError> {
     match s {
         sexp @ Sexp::List(vec) => match &vec[..] {
             [Sexp::Atom(S(op_name)), Sexp::Atom(S(id)), e] if op_name == "define" => {
-                Ok(ExprKind::Define(id.to_string(), parse_expr(&e)?))
+                Ok(ExprKind::Define(id.to_string(), parse_expr(e)?))
             }
             [Sexp::Atom(S(fun)), ..] if fun == "fun" => {
                 let snekfn = parse_fn(sexp)?;
                 Ok(ExprKind::Function(snekfn))
             }
-            _ => Ok(ExprKind::Normal(parse_expr(&sexp)?)),
+            _ => Ok(ExprKind::Normal(parse_expr(sexp)?)),
         },
-        e => Ok(ExprKind::Normal(parse_expr(&e)?)),
+        e => Ok(ExprKind::Normal(parse_expr(e)?)),
     }
 }
 
@@ -127,7 +128,7 @@ fn read_file(file: &mut File) -> Result<String, std::io::Error> {
 fn parse_sexp(s: String) -> Result<Sexp, std::io::Error> {
     match parse(&s) {
         Ok(sexp) => Ok(sexp),
-        Err(e) => Err(Error::new(ErrorKind::Other, format!("sexp error: {:?}", e))),
+        Err(e) => Err(Error::other(format!("sexp error: {:?}", e))),
     }
 }
 
@@ -141,7 +142,7 @@ fn consume_dynasm(
     instrs.push(Instr::Ret);
     match emitter.consume(name, instrs) {
         Some(()) => Ok(emitter),
-        None => Err(Error::new(ErrorKind::Other, format!("Dynasm failed."))),
+        None => Err(Error::other("Dynasm failed.".to_string())),
     }
 }
 
@@ -244,7 +245,7 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
         }
 
         // 2. parse input into sexp, then delete old buffer
-        let sexp_maybe = parse(&input.trim());
+        let sexp_maybe = parse(input.trim());
         input.clear();
 
         // 3. create context
@@ -274,7 +275,7 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         if let Err(e) =
                             main_tc(&e, &start_env, &local_context.shared.function_definitions)
                         {
-                            eprintln!("{}", std::io::Error::from(e).to_string());
+                            eprintln!("{}", std::io::Error::from(e));
                             continue;
                         }
                     }
@@ -328,14 +329,14 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                                 Ok(e_type) => {
                                     if !(e_type <= fn_type) {
                                         let err = TypeError::TypeMismatch(fn_type, e_type);
-                                        eprintln!("{}", std::io::Error::from(err).to_string());
+                                        eprintln!("{}", std::io::Error::from(err));
                                         continue;
                                     } else {
                                         // println!("Function will evaluate to: {}", e_type.to_string());
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("{}", std::io::Error::from(e).to_string());
+                                    eprintln!("{}", std::io::Error::from(e));
                                     continue;
                                 }
                             }
@@ -380,7 +381,7 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         if let Err(e) =
                             main_tc(&e, &start_env, &local_context.shared.function_definitions)
                         {
-                            eprintln!("{}", std::io::Error::from(e).to_string());
+                            eprintln!("{}", std::io::Error::from(e));
                             continue;
                         }
                     }
@@ -446,8 +447,8 @@ fn write_aot(
     const BASE: &str = "section .text\nextern snek_print\nglobal our_code_starts_here";
 
     let fn_blocks = functions
-        .into_iter()
-        .map(|(name, body)| create_block(&*name, &body[..]));
+        .iter()
+        .map(|(name, body)| create_block(name, &body[..]));
     let ourcode_block = create_block("our_code_starts_here", our_code);
 
     file.write_all(BASE.as_bytes())?;
@@ -472,7 +473,7 @@ fn run_jit(
     emitter.consume_slice("cast_error".to_string(), &CAST_ERROR[..]);
 
     // 1. consume functions
-    for (name, body) in functions.into_iter() {
+    for (name, body) in functions.iter() {
         emitter.consume_slice(name.clone(), body);
     }
     emitter.discard();
@@ -485,13 +486,13 @@ fn run_jit(
 }
 
 fn main_tc(e: &Expr, env: &im::HashMap<String, Type>, fn_env: &FnDefs) -> Result<Type, TypeError> {
-    let (t, _) = tc(e, env, fn_env)?;
-    Ok(t)
+    let typed = strictify_expr(e.clone(), env, fn_env)?;
+    Ok(typed.type_())
 }
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
-    if let None = args.get(1) {
+    if args.get(1).is_none() {
         usage_message(&args[0]);
         return Ok(());
     }
@@ -509,7 +510,7 @@ fn main() -> std::io::Result<()> {
         "-t" => (Mode::Typecheck, true),
         _ => {
             usage_message(&args[1]);
-            return Err(Error::new(ErrorKind::Other, "Invalid mode."));
+            return Err(Error::other("Invalid mode."));
         }
     };
 
@@ -532,14 +533,14 @@ fn main() -> std::io::Result<()> {
         (Mode::Typecheck, Some(f1), None) => (Some(File::open(f1)?), None),
         _ => {
             usage_message(&args[1]);
-            return Err(Error::new(ErrorKind::Other, "Invalid arguments."));
+            return Err(Error::other("Invalid arguments."));
         }
     };
 
     let mut emitter: EaterOfWords = EaterOfWords::new();
 
     let label_gen: LabelNumGenerator = LabelNumGenerator::new();
-    let has_input = input != None || mode == Mode::Aot;
+    let has_input = input.is_some() || mode == Mode::Aot;
 
     // REPL dispatch
     if let Mode::Repl = mode {
@@ -556,13 +557,11 @@ fn main() -> std::io::Result<()> {
     /*this code is shared for all but REPL. might as well not duplicate it.
      */
 
-    let mut program = read_file(&mut in_file.unwrap())
-        .and_then(|s| Ok("(".to_string() + &s + ")"))
+    let mut program = read_file(&mut in_file.unwrap()).map(|s| "(".to_string() + &s + ")")
         .and_then(parse_sexp)
         .and_then(|s| match s {
             Sexp::List(vec) => Ok(vec),
-            _ => Err(Error::new(
-                ErrorKind::Other,
+            _ => Err(Error::other(
                 "Could not create a proper list of s-expressions.",
             )),
         })?;
@@ -571,7 +570,7 @@ fn main() -> std::io::Result<()> {
 
     let snek_fns = program
         .iter()
-        .map(|s| parse_fn(s))
+        .map(parse_fn)
         .collect::<Result<Vec<SnekFn>, ParseError>>()?;
 
     let function_definitions: FnDefs =
@@ -629,7 +628,7 @@ fn main() -> std::io::Result<()> {
 
         // 3. print type if -t
         if mode == Mode::Typecheck {
-            println!("Program will evaluate to: {}", top_tc.to_string());
+            println!("Program will evaluate to: {}", top_tc);
         }
     }
 

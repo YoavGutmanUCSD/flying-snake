@@ -93,7 +93,7 @@ pub const CAST_ERROR: [Instr; 3] = [
 ];
 
 impl ToString for JumpDst {
-    fn to_string(self: &Self) -> String {
+    fn to_string(&self) -> String {
         match self {
             JumpDst::Label(name) => name.to_string(),
             JumpDst::Pointer(reg) => as_string(reg),
@@ -102,7 +102,7 @@ impl ToString for JumpDst {
 }
 
 impl ToString for BranchCode {
-    fn to_string(self: &Self) -> String {
+    fn to_string(&self) -> String {
         match self {
             BranchCode::Jne => "jne",
             BranchCode::Je => "je",
@@ -114,7 +114,7 @@ impl ToString for BranchCode {
 }
 
 impl ToString for OpCode {
-    fn to_string(self: &Self) -> String {
+    fn to_string(&self) -> String {
         match self {
             OpCode::IMov => "mov",
             OpCode::IAdd => "add",
@@ -158,7 +158,7 @@ fn as_string(r: &Rq) -> String {
 }
 
 impl ToString for Loc {
-    fn to_string(self: &Self) -> String {
+    fn to_string(&self) -> String {
         match self {
             Loc::Reg(reg) => as_string(reg),
             Loc::Offset(reg, n) => {
@@ -175,7 +175,7 @@ impl ToString for Loc {
 }
 
 impl ToString for Val {
-    fn to_string(self: &Self) -> String {
+    fn to_string(&self) -> String {
         match self {
             Val::Imm(n) => n.to_string(),
             Val::Place(loc) => loc.to_string(),
@@ -184,7 +184,7 @@ impl ToString for Val {
 }
 
 impl ToString for Instr {
-    fn to_string(self: &Self) -> String {
+    fn to_string(&self) -> String {
         match self {
             Instr::TwoArg(op, loc, val) => match (loc, val) {
                 (Loc::Offset(_, _), _) => format!(

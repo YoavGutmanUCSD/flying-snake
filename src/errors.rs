@@ -1,7 +1,7 @@
 use crate::types::Type;
 use std::fmt;
 use std::io;
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 
 pub enum ParseError {
     BadList,
@@ -130,26 +130,16 @@ impl fmt::Debug for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             TypeError::TypeMismatch(expected, got) => {
-                let msg = format!(
-                    "Expected {}, got {}.",
-                    expected.to_string(),
-                    got.to_string()
-                );
-                f.write_str(&*msg)
+                let msg = format!("Expected {}, got {}.", expected, got);
+                f.write_str(&msg)
             }
             TypeError::UntypedIdentifier(id) => {
-                let msg = format!(
-                    "No type for identifier {}. Might be unbound.",
-                    id.to_string(),
-                );
-                f.write_str(&*msg)
+                let msg = format!("No type for identifier {}. Might be unbound.", id,);
+                f.write_str(&msg)
             }
             TypeError::UnboundFunctionNoType(f_id) => {
-                let msg = format!(
-                    "No type for function {}. Might be unbound.",
-                    f_id.to_string(),
-                );
-                f.write_str(&*msg)
+                let msg = format!("No type for function {}. Might be unbound.", f_id,);
+                f.write_str(&msg)
             }
             TypeError::BadCast => {
                 write!(f, "Bad cast.")
@@ -180,24 +170,24 @@ impl<T, E> HomogenousBind<T, E> for Result<T, E> {
 
 impl From<ParseError> for io::Error {
     fn from(e: ParseError) -> io::Error {
-        Error::new(ErrorKind::Other, format!("parse error: {:?}", e))
+        Error::other(format!("parse error: {:?}", e))
     }
 }
 
 impl From<CompileError> for io::Error {
     fn from(e: CompileError) -> io::Error {
-        Error::new(ErrorKind::Other, format!("Compile error: {:?}", e))
+        Error::other(format!("Compile error: {:?}", e))
     }
 }
 
 impl From<RuntimeError> for io::Error {
     fn from(e: RuntimeError) -> Self {
-        Error::new(ErrorKind::Other, format!("Runtime error: {:?}", e))
+        Error::other(format!("Runtime error: {:?}", e))
     }
 }
 
 impl From<TypeError> for io::Error {
     fn from(e: TypeError) -> Self {
-        Error::new(ErrorKind::Other, format!("Type error: {:?}", e))
+        Error::other(format!("Type error: {:?}", e))
     }
 }

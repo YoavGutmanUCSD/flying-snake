@@ -20,6 +20,7 @@ pub enum Op2 {
     LessEqual,
 }
 
+#[derive(Clone)]
 pub enum Expr {
     Number(i64),
     Boolean(bool),

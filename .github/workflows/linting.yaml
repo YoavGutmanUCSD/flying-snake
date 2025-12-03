@@ -1,0 +1,43 @@
+name: linting
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cargo-clippy:
+    runs-on: ubuntu-latest
+    container:
+      image: rust:1-slim-bookworm
+
+    env:
+      RUSTUP_HOME: /tmp/rustup
+      CARGO_HOME: /tmp/cargo
+      CARGO_TARGET_DIR: /tmp/target
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.RUSTUP_HOME }}
+            ${{ env.CARGO_HOME }}/git
+            ${{ env.CARGO_HOME }}/registry
+            ${{ env.CARGO_TARGET_DIR }}
+          key: cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+
+      - name: Install Rust Nightly
+        run: rustup default nightly-2025-09-20
+
+      - name: Install Clippy
+        run: rustup component add clippy
+
+      - name: Install nasm and build essentials
+        run: apt-get update && apt-get install -y nasm build-essential
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
