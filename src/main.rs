@@ -8,6 +8,7 @@ mod errors;
 mod instr;
 mod jit;
 mod parse;
+mod typed_ast;
 mod types;
 
 use ast::{Expr, SnekFn};

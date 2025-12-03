@@ -33,7 +33,7 @@ pub fn leq(t1: Type, t2: Type) -> bool {
     }
 }
 
-fn union(t1: Type, t2: Type) -> Type {
+pub fn union(t1: Type, t2: Type) -> Type {
     match (t1, t2) {
         (Nothing, a) => a,
         (a, Nothing) => a,
