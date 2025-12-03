@@ -1,0 +1,4 @@
+(fun (f x y)
+  (let ((x (cast Num x)) (y (cast Num y)))
+    (+ (* x x) (* y y))))
+(f 3 4)
