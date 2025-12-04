@@ -5,7 +5,7 @@ use crate::instr::{BranchCode, Instr, JumpDst, Loc, OpCode, Val};
 use crate::types::Type;
 use crate::validate::ast::{BindingSymbol, ValidatedExpr};
 use crate::validate::ValidatedFunction;
-use dynasmrt::x64::Rq::*;
+use dynasmrt::x64::Rq::{self, *};
 
 // this can be used later to only typecheck what hasn't been typechecked already
 fn type_check_loc(loc: Loc, err_label: String, jump_cond: BranchCode) -> Vec<Instr> {
@@ -528,7 +528,15 @@ pub fn compile_validated_fn(
     loc_fn_context.value_map = loc_value_map;
     loc_fn_context.symbol_map = loc_symbol_map;
 
-    let mut instrs = compile_validated_expr(&validated.body, loc_fn_context, Vec::new())?;
+    let mut instrs = compile_validated_expr(
+        &validated.body,
+        loc_fn_context,
+        vec![Instr::TwoArg(
+            OpCode::Mov,
+            Loc::Reg(Rq::RBP),
+            Val::Place(Loc::Reg(Rq::RSP)),
+        )],
+    )?;
     instrs.push(Instr::Ret);
     Ok((name, instrs))
 }

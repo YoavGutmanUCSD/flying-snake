@@ -249,10 +249,18 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         }
                     }
 
-                    let res = compile_validated_expr(&validated, branch_context, Vec::new())
-                        .map_err(std::io::Error::from)
-                        .and_then(|vec| consume_dynasm(&mut emitter, code_label, vec))
-                        .bind(|consumer| exert_repl(consumer, &mut define_vec));
+                    let res = compile_validated_expr(
+                        &validated,
+                        branch_context,
+                        vec![Instr::TwoArg(
+                            OpCode::Mov,
+                            Loc::Reg(Rq::RBP),
+                            Val::Place(Loc::Reg(Rq::RSP)),
+                        )],
+                    )
+                    .map_err(std::io::Error::from)
+                    .and_then(|vec| consume_dynasm(&mut emitter, code_label, vec))
+                    .bind(|consumer| exert_repl(consumer, &mut define_vec));
                     match res {
                         Err(e) => eprintln!("{}", e),
                         Ok(retval) => {
