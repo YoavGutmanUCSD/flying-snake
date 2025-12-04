@@ -1,7 +1,6 @@
 name: testing
 
 on:
-  push:
   pull_request:
 
 jobs:
@@ -37,7 +36,7 @@ jobs:
         run: apt-get update && apt-get install -y nasm build-essential
 
       - name: Build
-        run: cargo build --release --verbose
+        run: cargo build --verbose
 
       - name: Test
-        run: RUST_BACKTRACE=1 cargo test --workspace --release --verbose
+        run: cargo test --workspace --verbose
