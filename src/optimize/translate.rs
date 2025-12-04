@@ -4,16 +4,20 @@ use crate::ast::Op1;
 use crate::instr::Val;
 use crate::types::{Type, Type::*};
 
+use super::ast::TypedBinding;
+use super::ast::TypedCall;
 use super::ast::{TypedExpr as TExpr, TypedExpr_::*};
+use crate::validate::ast::StackVar;
 
-fn inline_const(e: TExpr, env: &HashMap<String, Val>, changed: &mut bool) -> TExpr {
+fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, changed: &mut bool) -> TExpr {
     let (expr, expr_type) = (e.0, e.1);
     match expr {
         Let(bindings, let_expr) => {
-            let mut good_bindings: Vec<(String, TExpr)> = Vec::with_capacity(bindings.len());
+            let mut good_bindings: Vec<TypedBinding> = Vec::with_capacity(bindings.len());
             let mut new_env = env.clone();
-            for (id, id_expr) in bindings.into_iter() {
-                match id_expr.0 {
+            for binding in bindings.into_iter() {
+                let id = binding.symbol.id;
+                match binding.value.0 {
                     Number(i) => {
                         *changed = true;
                         new_env = new_env.update(id, Val::Imm(i << 1));
@@ -23,14 +27,15 @@ fn inline_const(e: TExpr, env: &HashMap<String, Val>, changed: &mut bool) -> TEx
                         new_env = new_env.update(id, Val::Imm(if b { 3 } else { 1 }));
                     }
                     _ => {
-                        good_bindings.push((id, id_expr));
+                        good_bindings.push(binding);
                     }
                 }
             }
             let new_let_expr = inline_const(*let_expr, &new_env, changed);
             TExpr(Let(good_bindings, Box::new(new_let_expr)), expr_type)
         }
-        Id(id) => {
+        Symbol(symbol) => {
+            let id = symbol.id;
             if let Some(Val::Imm(value)) = env.get(&id) {
                 if *value == 1 || *value == 3 {
                     TExpr(Boolean(*value == 3), Bool)
@@ -38,7 +43,7 @@ fn inline_const(e: TExpr, env: &HashMap<String, Val>, changed: &mut bool) -> TEx
                     TExpr(Number(value >> 1), Num)
                 }
             } else {
-                TExpr(Id(id), expr_type)
+                TExpr(Symbol(symbol), expr_type)
             }
         }
         Block(exprs) => {
@@ -48,35 +53,46 @@ fn inline_const(e: TExpr, env: &HashMap<String, Val>, changed: &mut bool) -> TEx
                 .collect::<Vec<TExpr>>();
             TExpr(Block(good_exprs), expr_type)
         }
-        Call(fname, args) => {
-            let good_args = args
+        Call(typed_call) => {
+            let good_args = typed_call
+                .args
                 .into_iter()
                 .map(|expr| inline_const(expr, env, changed))
                 .collect::<Vec<TExpr>>();
-            TExpr(Call(fname, good_args), expr_type)
+            let new_call = TypedCall {
+                args: good_args,
+                ..typed_call
+            };
+            TExpr(Call(new_call), expr_type)
         }
-        UnOp(op, e) => TExpr(
-            UnOp(op, Box::new(inline_const(*e, env, changed))),
+        UnOp(checks, op, e) => TExpr(
+            UnOp(checks, op, Box::new(inline_const(*e, env, changed))),
             expr_type,
         ),
-        BinOp(op, e1, e2) => TExpr(
+        BinOp(checks, op, e1, e2) => TExpr(
             BinOp(
+                checks,
                 op,
                 Box::new(inline_const(*e1, env, changed)),
                 Box::new(inline_const(*e2, env, changed)),
             ),
             expr_type,
         ),
-        If(econd, e1, e2) => TExpr(
+        If(checks, econd, e1, e2) => TExpr(
             If(
+                checks,
                 Box::new(inline_const(*econd, env, changed)),
                 Box::new(inline_const(*e1, env, changed)),
                 Box::new(inline_const(*e2, env, changed)),
             ),
             expr_type,
         ),
-        Set(set_id, set_expr) => TExpr(
-            Set(set_id, Box::new(inline_const(*set_expr, env, changed))),
+        Set(checks, set_id, set_expr) => TExpr(
+            Set(
+                checks,
+                set_id,
+                Box::new(inline_const(*set_expr, env, changed)),
+            ),
             expr_type,
         ),
         Loop(loop_expr) => TExpr(
@@ -92,11 +108,11 @@ fn inline_const(e: TExpr, env: &HashMap<String, Val>, changed: &mut bool) -> TEx
             expr_type,
         ),
         Cast(expr) => TExpr(Cast(Box::new(inline_const(*expr, env, changed))), expr_type),
-        _ => TExpr(expr, expr_type)
+        _ => TExpr(expr, expr_type),
     }
 }
 
-fn simplify(e: TExpr, env: &HashMap<String, Type>, changed: &mut bool) -> TExpr {
+fn simplify(e: TExpr, env: &HashMap<StackVar, Type>, changed: &mut bool) -> TExpr {
     let (expr, expr_type) = (e.0, e.1);
     match expr {
         Block(exprs) => {
@@ -106,12 +122,17 @@ fn simplify(e: TExpr, env: &HashMap<String, Type>, changed: &mut bool) -> TExpr 
                 .collect::<Vec<TExpr>>();
             TExpr(Block(good_exprs), expr_type)
         }
-        Call(fname, args) => {
-            let good_args = args
+        Call(typed_call) => {
+            let good_args = typed_call
+                .args
                 .into_iter()
                 .map(|expr| simplify(expr, env, changed))
                 .collect::<Vec<TExpr>>();
-            TExpr(Call(fname, good_args), expr_type)
+            let new_call = TypedCall {
+                args: good_args,
+                ..typed_call
+            };
+            TExpr(Call(new_call), expr_type)
         }
         Cast(cast_expr) => {
             if cast_expr.type_() == expr_type {
@@ -121,22 +142,23 @@ fn simplify(e: TExpr, env: &HashMap<String, Type>, changed: &mut bool) -> TExpr 
                 TExpr(Cast(cast_expr), expr_type)
             }
         }
-        UnOp(op, unop_expr) => match (unop_expr.type_(), op) {
+        UnOp(checks, op, unop_expr) => match (unop_expr.type_(), op) {
             (Num, Op1::IsNum) | (Bool, Op1::IsBool) => {
                 *changed = true;
                 TExpr(Boolean(true), Bool)
             }
-            (_, _) => TExpr(UnOp(op, unop_expr), expr_type),
+            (_, _) => TExpr(UnOp(checks, op, unop_expr), expr_type),
         },
-        BinOp(op, e1, e2) => TExpr(
+        BinOp(checks, op, e1, e2) => TExpr(
             BinOp(
+                checks,
                 op,
                 Box::new(simplify(*e1, env, changed)),
                 Box::new(simplify(*e2, env, changed)),
             ),
             expr_type,
         ),
-        If(econd, e1, e2) => match *econd {
+        If(checks, econd, e1, e2) => match *econd {
             TExpr(Boolean(b), Bool) => {
                 *changed = true;
                 if b {
@@ -147,6 +169,7 @@ fn simplify(e: TExpr, env: &HashMap<String, Type>, changed: &mut bool) -> TExpr 
             }
             _ => TExpr(
                 If(
+                    checks,
                     Box::new(simplify(*econd, env, changed)),
                     Box::new(simplify(*e1, env, changed)),
                     Box::new(simplify(*e2, env, changed)),
@@ -154,8 +177,8 @@ fn simplify(e: TExpr, env: &HashMap<String, Type>, changed: &mut bool) -> TExpr 
                 expr_type,
             ),
         },
-        Set(set_id, set_expr) => TExpr(
-            Set(set_id, Box::new(simplify(*set_expr, env, changed))),
+        Set(checks, set_id, set_expr) => TExpr(
+            Set(checks, set_id, Box::new(simplify(*set_expr, env, changed))),
             expr_type,
         ),
         Loop(loop_expr) => TExpr(
@@ -171,9 +194,14 @@ fn simplify(e: TExpr, env: &HashMap<String, Type>, changed: &mut bool) -> TExpr 
             expr_type,
         ),
         Let(bindings, let_expr) => {
-            let mut good_bindings = Vec::with_capacity(bindings.len());
-            for (id, b_expr) in bindings.into_iter() {
-                good_bindings.push((id, simplify(b_expr, env, changed)));
+            let mut good_bindings: Vec<TypedBinding> = Vec::with_capacity(bindings.len());
+            for binding in bindings.into_iter() {
+                let simplified_expr = simplify(binding.value, env, changed);
+                let new_binding = TypedBinding {
+                    value: simplified_expr,
+                    ..binding
+                };
+                good_bindings.push(new_binding);
             }
             let good_let_expr = simplify(*let_expr, env, changed);
             TExpr(Let(good_bindings, Box::new(good_let_expr)), expr_type)
@@ -182,7 +210,11 @@ fn simplify(e: TExpr, env: &HashMap<String, Type>, changed: &mut bool) -> TExpr 
     }
 }
 
-pub fn optimize(e: TExpr, type_env: &HashMap<String, Type>, define_env: &HashMap<String, Val>) -> TExpr {
+pub fn optimize(
+    e: TExpr,
+    type_env: &HashMap<StackVar, Type>,
+    define_env: &HashMap<StackVar, Val>,
+) -> TExpr {
     // if this is ever false after the loop, can return.
     let mut change_counter: bool;
     let mut final_expr = e;
