@@ -83,13 +83,19 @@ fn simplify(e: TExpr, env: &HashMap<String, Type>, changed: &mut bool) -> TExpr 
                 .collect::<Vec<TExpr>>();
             TExpr(Call(fname, good_args), expr_type)
         }
-        Cast(cast_expr) => match *cast_expr {
-            TExpr(inner_expr, Bool) if expr_type == Bool => TExpr(inner_expr, Bool),
-            TExpr(inner_expr, Num) if expr_type == Num => TExpr(inner_expr, Bool),
-            _ => TExpr(Cast(cast_expr), expr_type),
-        },
+        Cast(cast_expr) => {
+            if cast_expr.type_() == expr_type {
+                *changed = true;
+                *cast_expr
+            } else {
+                TExpr(Cast(cast_expr), expr_type)
+            }
+        }
         UnOp(op, unop_expr) => match (unop_expr.type_(), op) {
-            (Num, Op1::IsNum) | (Bool, Op1::IsBool) => TExpr(Boolean(true), Bool),
+            (Num, Op1::IsNum) | (Bool, Op1::IsBool) => {
+                *changed = true;
+                TExpr(Boolean(true), Bool)
+            }
             (_, _) => TExpr(UnOp(op, unop_expr), expr_type),
         },
         BinOp(op, e1, e2) => TExpr(
@@ -100,14 +106,24 @@ fn simplify(e: TExpr, env: &HashMap<String, Type>, changed: &mut bool) -> TExpr 
             ),
             expr_type,
         ),
-        If(econd, e1, e2) => TExpr(
-            If(
-                Box::new(simplify(*econd, env, changed)),
-                Box::new(simplify(*e1, env, changed)),
-                Box::new(simplify(*e2, env, changed)),
+        If(econd, e1, e2) => match *econd {
+            TExpr(Boolean(b), Bool) => {
+                *changed = true;
+                if b {
+                    *e1
+                } else {
+                    *e2
+                }
+            }
+            _ => TExpr(
+                If(
+                    Box::new(simplify(*econd, env, changed)),
+                    Box::new(simplify(*e1, env, changed)),
+                    Box::new(simplify(*e2, env, changed)),
+                ),
+                expr_type,
             ),
-            expr_type,
-        ),
+        },
         Set(set_id, set_expr) => TExpr(
             Set(set_id, Box::new(simplify(*set_expr, env, changed))),
             expr_type,
