@@ -13,7 +13,8 @@ endif
 tests/%.run: tests/%.s runtime/start.rs
 	nasm -f $(ARCH) tests/$*.s -o tests/$*.o
 	ar rcs tests/lib$*.a tests/$*.o
-	rustc --target $(RUST_TARGET) -L tests/ -lour_code:$* runtime/start.rs -o tests/$*.run
+	rustc --target $(RUST_TARGET) -C relocation-model=static -C link-arg=-no-pie \
+		-L tests/ -lour_code:$* runtime/start.rs -o tests/$*.run
 
 
 # Change below to whatever might be helpful! 
@@ -30,4 +31,3 @@ clean:
 test:
 	cargo build --target $(RUST_TARGET)
 	cargo test -- --test-threads=1
-

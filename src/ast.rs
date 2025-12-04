@@ -1,6 +1,6 @@
 use crate::types::Type;
 // Expressions
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Op1 {
     Add1,
     Sub1,
@@ -8,7 +8,7 @@ pub enum Op1 {
     IsBool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Op2 {
     Plus,
     Minus,
@@ -20,6 +20,7 @@ pub enum Op2 {
     LessEqual,
 }
 
+#[derive(Clone)]
 pub enum Expr {
     Number(i64),
     Boolean(bool),

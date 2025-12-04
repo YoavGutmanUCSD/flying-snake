@@ -1,162 +1,83 @@
 use crate::types::Type;
-use std::fmt;
 use std::io;
-use std::io::{Error, ErrorKind};
+use std::io::Error;
+use thiserror::Error;
 
+#[derive(Debug, Error)]
 pub enum ParseError {
+    #[error("bad list")]
     BadList,
+    #[error("invalid program")]
     InvalidProgram, // BadEverything in boa
+    #[error("unexpected define")]
     UnexpectedDefine,
+    #[error("at least one bad let binding")]
     BadLetBinding,
+    #[error("bad let bindings at large")]
     BadLetExpression,
+    #[error("bad function args")]
     BadFnArgs,
+    #[error("one bad function arg")]
     SingleBadFnArg,
+    #[error("bad function expr")]
     BadFnExpr,
+    #[error("bad type")]
     BadType,
+    #[error("type wasn't written correctly for a function argument")]
     BadlyTypedFnArg,
 }
 
+#[derive(Debug, Error)]
 pub enum CompileError {
+    #[error("Unbound variable identifier {0}")]
     UnboundIdentifier(String),
+    #[error("Duplicate binding.")]
     DuplicateBinding,
+    #[error("No break target! Break outside of loop.")]
     NoBreakTarget,
+    #[error("Tried to set! a variable that wasn't defined.")]
     SetUnboundVariable,
+    #[error("Tried to redefine a keyword.")]
     SetKeyword,
+    #[error("Duplicate parameter {1} in function {0}")]
     FnDupArg(String, String),
+    #[error("Unbound function: {0}")]
     FnUnbound(String),
+    #[error("Type error: arity mismatch in call to '{0}': expected {1} got {2}")]
     FnBadArgs(String, i32, i32),
+    #[error("Duplicate function definition: {0}")]
     FnDup(String),
+    #[error("Illegal usage of input in function '{0}'")]
     IllegalInput(String),
+    #[error("{0}")]
     Other(String),
 }
 
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug, Error)]
 pub enum RuntimeError {
+    #[error("Invalid arguments to one or more functions.")]
     TypeError,
+    #[error("Integer overflow.")]
     OverflowError,
+    #[error("Bad cast.")]
     CastError,
+    #[error("Unknown error")]
     BadError,
 }
 
+#[derive(Debug, Error)]
 pub enum TypeError {
+    #[error("Expected {0}, got {1}.")]
     TypeMismatch(Type, Type),
+    #[error("No type for identifier {0}. Might be unbound.")]
     UntypedIdentifier(String),
+    #[error("No type for function {0}. Might be unbound.")]
     UnboundFunctionNoType(String),
+    #[error("Bad cast.")]
     BadCast,
+    #[error("Program does not typecheck.")]
     DoesNotTC, // generic
-}
-
-impl fmt::Debug for RuntimeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        match self {
-            RuntimeError::TypeError => {
-                write!(f, "Invalid arguments to one or more functions.")
-            }
-            RuntimeError::OverflowError => {
-                write!(f, "Integer overflow.")
-            }
-            RuntimeError::CastError => {
-                write!(f, "Bad cast.")
-            }
-            RuntimeError::BadError => {
-                write!(f, "Unknown error")
-            }
-        }
-    }
-}
-
-impl fmt::Debug for CompileError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        match self {
-            CompileError::UnboundIdentifier(s) => {
-                write!(f, "Unbound variable identifier ")?;
-                f.write_str(s)
-            }
-            CompileError::DuplicateBinding => write!(f, "Duplicate binding."),
-            CompileError::NoBreakTarget => write!(f, "No break target! Break outside of loop."),
-            CompileError::SetUnboundVariable => {
-                write!(f, "Tried to set! a variable that wasn't defined.")
-            }
-            CompileError::SetKeyword => write!(f, "Tried to redefine a keyword."),
-            CompileError::FnDupArg(fname, id) => {
-                write!(f, "Duplicate parameter ")?;
-                f.write_str(id)?;
-                write!(f, " in function ")?;
-                f.write_str(fname)
-            }
-            CompileError::FnUnbound(fname) => {
-                write!(f, "Unbound function: ")?;
-                f.write_str(fname)
-            }
-            CompileError::FnBadArgs(fname, expected, received) => {
-                let msg = format!(
-                    "Arity mismatch in call to '{}': expected {} got {}",
-                    fname, expected, received
-                );
-                f.write_str(&msg)
-            }
-            CompileError::FnDup(fname) => {
-                let msg = format!("Duplicate function definition: {}", fname);
-                f.write_str(&msg)
-            }
-            CompileError::IllegalInput(fname) => {
-                let msg = format!("Illegal usage of input in function '{}'", fname);
-                f.write_str(&msg)
-            }
-            CompileError::Other(s) => f.write_str(s),
-        }
-    }
-}
-
-impl fmt::Debug for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self {
-            ParseError::BadList => write!(f, "bad list"),
-            ParseError::InvalidProgram => write!(f, "invalid program"),
-            ParseError::UnexpectedDefine => write!(f, "unexpected define"),
-            ParseError::BadLetBinding => write!(f, "at least one bad let binding"),
-            ParseError::BadLetExpression => write!(f, "bad let bindings at large"),
-            ParseError::BadFnExpr => write!(f, "bad function expr"),
-            ParseError::BadFnArgs => write!(f, "bad function args"),
-            ParseError::SingleBadFnArg => write!(f, "one bad function arg"),
-            ParseError::BadType => write!(f, "bad type"),
-            ParseError::BadlyTypedFnArg => {
-                write!(f, "type wasn't written correctly for a function argument")
-            }
-        }
-    }
-}
-
-impl fmt::Debug for TypeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self {
-            TypeError::TypeMismatch(expected, got) => {
-                let msg = format!(
-                    "Expected {}, got {}.",
-                    expected.to_string(),
-                    got.to_string()
-                );
-                f.write_str(&*msg)
-            }
-            TypeError::UntypedIdentifier(id) => {
-                let msg = format!(
-                    "No type for identifier {}. Might be unbound.",
-                    id.to_string(),
-                );
-                f.write_str(&*msg)
-            }
-            TypeError::UnboundFunctionNoType(f_id) => {
-                let msg = format!(
-                    "No type for function {}. Might be unbound.",
-                    f_id.to_string(),
-                );
-                f.write_str(&*msg)
-            }
-            TypeError::BadCast => {
-                write!(f, "Bad cast.")
-            }
-            TypeError::DoesNotTC => write!(f, "Program does not typecheck."),
-        }
-    }
 }
 
 // this does what i wanted out of and_then!
@@ -180,24 +101,24 @@ impl<T, E> HomogenousBind<T, E> for Result<T, E> {
 
 impl From<ParseError> for io::Error {
     fn from(e: ParseError) -> io::Error {
-        Error::new(ErrorKind::Other, format!("parse error: {:?}", e))
+        Error::other(format!("parse error: {}", e))
     }
 }
 
 impl From<CompileError> for io::Error {
     fn from(e: CompileError) -> io::Error {
-        Error::new(ErrorKind::Other, format!("Compile error: {:?}", e))
+        Error::other(format!("Compile error: {}", e))
     }
 }
 
 impl From<RuntimeError> for io::Error {
     fn from(e: RuntimeError) -> Self {
-        Error::new(ErrorKind::Other, format!("Runtime error: {:?}", e))
+        Error::other(format!("Runtime error: {}", e))
     }
 }
 
 impl From<TypeError> for io::Error {
     fn from(e: TypeError) -> Self {
-        Error::new(ErrorKind::Other, format!("Type error: {:?}", e))
+        Error::other(format!("Type error: {}", e))
     }
 }

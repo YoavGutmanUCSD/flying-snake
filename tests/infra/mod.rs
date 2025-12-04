@@ -1,10 +1,8 @@
 // Add paste crate for macro identifier concatenation
 use std::{
-    fs::File,
-    io::{prelude::*, BufReader, Write},
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::mpsc,
     thread,
     time::Duration,
 };
@@ -119,8 +117,9 @@ fn run_success_test_with_typecheck(
     if !failed_flags.is_empty() {
         for (flag, actual_trim, raw) in &failed_flags {
             eprintln!(
-                "Flag {} unexpected output:\n{}",
+                "Flag {} unexpected output (got `{}`):\n{}",
                 flag,
+                actual_trim,
                 prettydiff::diff_lines(raw, expected_trim)
             );
         }
@@ -147,7 +146,6 @@ fn run_runtime_error_test_with_typecheck(
         }
         Err(err) => {
             check_error_msg(&err, expected);
-            return;
         }
         Ok((out1, out2)) => {
             panic!(
@@ -160,7 +158,7 @@ fn run_runtime_error_test_with_typecheck(
 
 fn run_static_error_test_with_typecheck(name: &str, file: &str, expected: &str, typecheck: bool) {
     match compile_with_typecheck(name, file, None, typecheck) {
-        Ok((e1, e2)) => panic!("expected a failure, but compilation succeeded"),
+        Ok((_e1, _e2)) => panic!("expected a failure, but compilation succeeded"),
         Err(err) => check_error_msg(&err, expected),
     }
 }
@@ -221,8 +219,8 @@ fn compile_with_typecheck(
     let compile_flag = if typecheck { "-tc" } else { "-c" };
     let output_c = Command::new(&boa_path)
         .arg(compile_flag)
-        .arg(&mk_path(file, Ext::Snek))
-        .arg(&mk_path(name, Ext::Asm))
+        .arg(mk_path(file, Ext::Snek))
+        .arg(mk_path(name, Ext::Asm))
         .output()
         .expect("could not run the compiler");
     if !output_c.status.success() {
@@ -232,7 +230,7 @@ fn compile_with_typecheck(
     // Second phase: execute (-e or -te)
     let mut cmd_e = Command::new(&boa_path);
     let exec_flag = if typecheck { "-te" } else { "-e" };
-    cmd_e.arg(exec_flag).arg(&mk_path(file, Ext::Snek));
+    cmd_e.arg(exec_flag).arg(mk_path(file, Ext::Snek));
     if let Some(inp) = input {
         cmd_e.arg(inp);
     }
@@ -246,22 +244,20 @@ fn compile_with_typecheck(
 
     // Assemble and link
     let output = Command::new("make")
-        .arg(&mk_path(name, Ext::Run))
+        .arg(mk_path(name, Ext::Run))
         .output()
         .expect("could not run make");
     assert!(output.status.success(), "linking failed");
 
     // Run produced program and capture stdout
-    let output_run = run(name, input)
-        .map_err(|e| SnekError::Run(e))?
-        .into_bytes();
+    let output_run = run(name, input).map_err(SnekError::Run)?.into_bytes();
     let run_stdout = String::from_utf8(output_run).unwrap();
 
     Ok((jit_stdout, run_stdout))
 }
 
 fn run(name: &str, input: Option<&str>) -> Result<String, String> {
-    let mut cmd = Command::new(&mk_path(name, Ext::Run));
+    let mut cmd = Command::new(mk_path(name, Ext::Run));
     if let Some(input) = input {
         cmd.arg(input);
     }
@@ -329,7 +325,7 @@ pub(crate) fn run_repl_sequence_test(
             if let (Some(start), Some(end)) = (match_start, match_end) {
                 let matched_content = remaining[start..end].trim().to_string();
                 found_outputs.push(matched_content);
-                current_pos = current_pos + end;
+                current_pos += end;
             } else {
                 eprintln!(
                     "[repl_test] Internal error extracting match for {:?}\nFull output:\n{}",
@@ -382,7 +378,7 @@ fn run_repl_with_timeout(commands: &[&str], timeout_ms: u64, typecheck: bool) ->
             stdin.flush().unwrap();
             thread::sleep(Duration::from_millis(100));
         }
-        writeln!(stdin, "").unwrap();
+        writeln!(stdin).unwrap();
         stdin.flush().unwrap();
     }
 

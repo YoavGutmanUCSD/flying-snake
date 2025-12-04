@@ -11,7 +11,7 @@ use crate::types::Type;
 
 pub fn parse_expr(s: &Sexp) -> Result<Expr, ParseError> {
     match s {
-        Sexp::Atom(I(n)) => Ok(Expr::Number(i64::try_from(*n).unwrap())),
+        Sexp::Atom(I(n)) => Ok(Expr::Number(*n)),
         Sexp::Atom(S(id)) if id == "true" => Ok(Expr::Boolean(true)),
         Sexp::Atom(S(id)) if id == "false" => Ok(Expr::Boolean(false)),
         Sexp::Atom(S(id)) => Ok(Expr::Id(id.to_string())),
@@ -176,7 +176,7 @@ fn untyped_args(args: &[Sexp]) -> Result<Vec<(String, Type)>, ParseError> {
     Ok(retval)
 }
 
-fn parse_binds(bindings: &Vec<Sexp>) -> Result<Vec<(String, Expr)>, ParseError> {
+fn parse_binds(bindings: &[Sexp]) -> Result<Vec<(String, Expr)>, ParseError> {
     bindings.iter().map(parse_bind).collect()
 }
 

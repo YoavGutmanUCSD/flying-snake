@@ -1,50 +1,72 @@
 use dynasmrt::x64::Rq;
 
-// Instrs
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, derive_more::Display)]
+#[display("{}", self.fmt_loc())]
 pub enum Loc {
     Reg(Rq),
     Offset(Rq, i32),
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, derive_more::Display)]
 pub enum Val {
+    #[display("{_0}")]
     Place(Loc),
+    #[display("{_0}")]
     Imm(i64),
 }
 
-// i want to remove the I later
-#[derive(Clone, Copy)]
+#[derive(derive_more::Display)]
 pub enum OpCode {
-    IMov,
-    IAdd,
-    ISub,
-    IMul,
-    IXor,
-    ICmp,
-    ITest,
-    ICMove,
-    ICMovg,
-    ICMovge,
-    ICMovl,
-    ICMovle,
-    ILsh,
-    IRsh,
+    #[display("mov")]
+    Mov,
+    #[display("add")]
+    Add,
+    #[display("sub")]
+    Sub,
+    #[display("imul")]
+    Mul,
+    #[display("xor")]
+    Xor,
+    #[display("cmp")]
+    Cmp,
+    #[display("test")]
+    Test,
+    #[display("cmove")]
+    CMove,
+    #[display("cmovg")]
+    CMovg,
+    #[display("cmovge")]
+    CMovge,
+    #[display("cmovl")]
+    CMovl,
+    #[display("cmovle")]
+    CMovle,
+    #[display("sal")]
+    Lsh,
+    #[display("sar")]
+    Rsh,
 }
 
-#[derive(Clone, Copy)]
+#[derive(derive_more::Display)]
 pub enum BranchCode {
+    #[display("jne")]
     Jne,
+    #[display("je")]
     Je,
+    #[display("jmp")]
     Jmp,
+    #[display("jo")]
     Jo,
 }
 
+#[derive(derive_more::Display)]
 pub enum JumpDst {
+    #[display("{_0}")]
     Label(String),
-    Pointer(Rq),
 }
 
+#[derive(derive_more::Display)]
+#[display("{}", self.fmt_instr())]
 pub enum Instr {
     Label(String),
     Jump(BranchCode, JumpDst),
@@ -61,22 +83,22 @@ const CAST_ERROR_CODE: i64 = 0b10111;
 
 pub const TYPE_ERROR: [Instr; 3] = [
     Instr::TwoArg(
-        OpCode::IMov,
+        OpCode::Mov,
         Loc::Reg(Rq::RSP),
         Val::Place(Loc::Reg(Rq::RBP)),
     ),
-    Instr::TwoArg(OpCode::IMov, Loc::Reg(Rq::RAX), Val::Imm(TYPE_ERROR_CODE)),
+    Instr::TwoArg(OpCode::Mov, Loc::Reg(Rq::RAX), Val::Imm(TYPE_ERROR_CODE)),
     Instr::Ret,
 ];
 
 pub const OVERFLOW_ERROR: [Instr; 3] = [
     Instr::TwoArg(
-        OpCode::IMov,
+        OpCode::Mov,
         Loc::Reg(Rq::RSP),
         Val::Place(Loc::Reg(Rq::RBP)),
     ),
     Instr::TwoArg(
-        OpCode::IMov,
+        OpCode::Mov,
         Loc::Reg(Rq::RAX),
         Val::Imm(OVERFLOW_ERROR_CODE),
     ),
@@ -84,56 +106,13 @@ pub const OVERFLOW_ERROR: [Instr; 3] = [
 ];
 pub const CAST_ERROR: [Instr; 3] = [
     Instr::TwoArg(
-        OpCode::IMov,
+        OpCode::Mov,
         Loc::Reg(Rq::RSP),
         Val::Place(Loc::Reg(Rq::RBP)),
     ),
-    Instr::TwoArg(OpCode::IMov, Loc::Reg(Rq::RAX), Val::Imm(CAST_ERROR_CODE)),
+    Instr::TwoArg(OpCode::Mov, Loc::Reg(Rq::RAX), Val::Imm(CAST_ERROR_CODE)),
     Instr::Ret,
 ];
-
-impl ToString for JumpDst {
-    fn to_string(self: &Self) -> String {
-        match self {
-            JumpDst::Label(name) => name.to_string(),
-            JumpDst::Pointer(reg) => as_string(reg),
-        }
-    }
-}
-
-impl ToString for BranchCode {
-    fn to_string(self: &Self) -> String {
-        match self {
-            BranchCode::Jne => "jne",
-            BranchCode::Je => "je",
-            BranchCode::Jmp => "jmp",
-            BranchCode::Jo => "jo",
-        }
-        .to_string() // OH MY GOD
-    }
-}
-
-impl ToString for OpCode {
-    fn to_string(self: &Self) -> String {
-        match self {
-            OpCode::IMov => "mov",
-            OpCode::IAdd => "add",
-            OpCode::ISub => "sub",
-            OpCode::IMul => "imul",
-            OpCode::IXor => "xor",
-            OpCode::ICmp => "cmp",
-            OpCode::ITest => "test",
-            OpCode::ICMove => "cmove",
-            OpCode::ICMovg => "cmovg",
-            OpCode::ICMovge => "cmovge",
-            OpCode::ICMovl => "cmovl",
-            OpCode::ICMovle => "cmovle",
-            OpCode::ILsh => "sal",
-            OpCode::IRsh => "sar",
-        }
-        .to_string()
-    }
-}
 
 fn as_string(r: &Rq) -> String {
     match r {
@@ -157,8 +136,8 @@ fn as_string(r: &Rq) -> String {
     .to_string()
 }
 
-impl ToString for Loc {
-    fn to_string(self: &Self) -> String {
+impl Loc {
+    fn fmt_loc(&self) -> String {
         match self {
             Loc::Reg(reg) => as_string(reg),
             Loc::Offset(reg, n) => {
@@ -174,41 +153,17 @@ impl ToString for Loc {
     }
 }
 
-impl ToString for Val {
-    fn to_string(self: &Self) -> String {
-        match self {
-            Val::Imm(n) => n.to_string(),
-            Val::Place(loc) => loc.to_string(),
-        }
-    }
-}
-
-impl ToString for Instr {
-    fn to_string(self: &Self) -> String {
+impl Instr {
+    fn fmt_instr(&self) -> String {
         match self {
             Instr::TwoArg(op, loc, val) => match (loc, val) {
-                (Loc::Offset(_, _), _) => format!(
-                    "{} QWORD {}, {}",
-                    op.to_string(),
-                    loc.to_string(),
-                    val.to_string()
-                ),
-                (_, Val::Place(Loc::Offset(_, _))) => format!(
-                    "{} {}, QWORD {}",
-                    op.to_string(),
-                    loc.to_string(),
-                    val.to_string()
-                ),
-                _ => format!(
-                    "{} {}, {}",
-                    op.to_string(),
-                    loc.to_string(),
-                    val.to_string()
-                ),
+                (Loc::Offset(_, _), _) => format!("{} QWORD {}, {}", op, loc, val),
+                (_, Val::Place(Loc::Offset(_, _))) => format!("{} {}, QWORD {}", op, loc, val),
+                _ => format!("{} {}, {}", op, loc, val),
             },
             Instr::Label(name) => format!("{name}:"),
-            Instr::Jump(branch, name) => format!("{} {}", branch.to_string(), name.to_string()),
-            Instr::Neg(loc) => format!("neg {}", loc.to_string()), // special case for now
+            Instr::Jump(branch, name) => format!("{} {}", branch, name),
+            Instr::Neg(loc) => format!("neg {}", loc), // special case for now
             Instr::Ret => "ret".to_string(),
             Instr::MovLabel(reg, label) => format!("mov {}, {}", as_string(reg), label),
             Instr::CallPrint(reg) => format!(
@@ -219,11 +174,3 @@ impl ToString for Instr {
         }
     }
 }
-
-pub fn instrs_to_str(is: &Vec<Instr>) -> String {
-    is.iter()
-        .map(|i| i.to_string())
-        .collect::<Vec<String>>()
-        .join("\n")
-}
-// END instrs

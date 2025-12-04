@@ -1,5 +1,5 @@
 use crate::instr::{BranchCode, Instr, JumpDst, Loc, OpCode, Val};
-use dynasmrt::x64::Rq::*;
+// `Rq` macros are provided by dynasm at macro expansion time, so no explicit import is needed.
 use dynasmrt::{dynasm, DynamicLabel, DynasmApi, DynasmLabelApi};
 use std::collections::HashMap;
 
@@ -17,7 +17,7 @@ fn snek_print(i: i64) -> i64 {
         }
         _ => eprintln!("Unknown error"),
     }
-    return i;
+    i
 }
 
 pub fn update_label_table(
@@ -27,7 +27,7 @@ pub fn update_label_table(
 ) {
     for i in is {
         if let Instr::Label(label) = i {
-            if let None = table.get(label) {
+            if table.get(label).is_none() {
                 let label_real = ops.new_dynamic_label();
                 table.insert(label.to_string(), label_real);
             }
@@ -122,20 +122,15 @@ fn jmp_to_asm(
     dst: &JumpDst,
     label_table: &HashMap<String, DynamicLabel>,
 ) -> Option<()> {
-    match (branch, dst) {
-        (BranchCode::Jmp, JumpDst::Pointer(RAX)) => dynasm!(ops ; .arch x64 ; jmp rax),
-        (_, JumpDst::Label(l)) => match label_table.get(l) {
-            Some(label_true) => match branch {
-                BranchCode::Jmp => dynasm!(ops ; .arch x64 ; jmp => *label_true),
-                BranchCode::Je => dynasm!(ops ; .arch x64 ; je => *label_true),
-                BranchCode::Jne => dynasm!(ops ; .arch x64 ; jne => *label_true),
-                BranchCode::Jo => dynasm!(ops ; .arch x64 ; jo => *label_true),
-            },
-            None => return None,
-        },
-        _ => return None,
-    };
-    return Some(());
+    let JumpDst::Label(label_name) = dst;
+    let label_true = label_table.get(label_name)?;
+    match branch {
+        BranchCode::Jmp => dynasm!(ops ; .arch x64 ; jmp => *label_true),
+        BranchCode::Je => dynasm!(ops ; .arch x64 ; je => *label_true),
+        BranchCode::Jne => dynasm!(ops ; .arch x64 ; jne => *label_true),
+        BranchCode::Jo => dynasm!(ops ; .arch x64 ; jo => *label_true),
+    }
+    Some(())
 }
 
 pub fn instr_to_asm(
@@ -156,23 +151,23 @@ pub fn instr_to_asm(
             return jmp_to_asm(ops, branch, dst, label_table);
         }
         _a @ Instr::TwoArg(op, dst, src) => match op {
-            OpCode::IMov => {
+            OpCode::Mov => {
                 // println!("running: {}", a.to_string());
                 instr_to_asm!(ops, mov, dst, src)
             }
-            OpCode::IAdd => instr_to_asm!(ops, add, dst, src),
-            OpCode::ISub => instr_to_asm!(ops, sub, dst, src),
-            OpCode::IMul => instr_to_asm!(ops, imul, dst, src),
-            OpCode::IXor => instr_to_asm!(ops, xor, dst, src),
-            OpCode::ICmp => instr_to_asm!(ops, cmp, dst, src),
-            OpCode::ITest => instr_to_asm!(ops, test, dst, src),
-            OpCode::ICMove => cmov_to_asm!(ops, cmove, dst, src),
-            OpCode::ICMovg => cmov_to_asm!(ops, cmovg, dst, src),
-            OpCode::ICMovge => cmov_to_asm!(ops, cmovge, dst, src),
-            OpCode::ICMovl => cmov_to_asm!(ops, cmovl, dst, src),
-            OpCode::ICMovle => cmov_to_asm!(ops, cmovle, dst, src),
-            OpCode::ILsh => shift_to_asm!(ops, shl, dst, src),
-            OpCode::IRsh => shift_to_asm!(ops, shr, dst, src),
+            OpCode::Add => instr_to_asm!(ops, add, dst, src),
+            OpCode::Sub => instr_to_asm!(ops, sub, dst, src),
+            OpCode::Mul => instr_to_asm!(ops, imul, dst, src),
+            OpCode::Xor => instr_to_asm!(ops, xor, dst, src),
+            OpCode::Cmp => instr_to_asm!(ops, cmp, dst, src),
+            OpCode::Test => instr_to_asm!(ops, test, dst, src),
+            OpCode::CMove => cmov_to_asm!(ops, cmove, dst, src),
+            OpCode::CMovg => cmov_to_asm!(ops, cmovg, dst, src),
+            OpCode::CMovge => cmov_to_asm!(ops, cmovge, dst, src),
+            OpCode::CMovl => cmov_to_asm!(ops, cmovl, dst, src),
+            OpCode::CMovle => cmov_to_asm!(ops, cmovle, dst, src),
+            OpCode::Lsh => shift_to_asm!(ops, shl, dst, src),
+            OpCode::Rsh => shift_to_asm!(ops, shr, dst, src),
         },
         Instr::Neg(dst) => instr_to_asm!(ops, neg, dst),
         Instr::Ret => dynasm!(ops ; .arch x64 ; ret),
@@ -184,12 +179,15 @@ pub fn instr_to_asm(
             }
         }
         Instr::CallPrint(reg) => {
-            dynasm!(ops ; .arch x64
-                ; mov Rq(*reg as u8), QWORD snek_print as _
-                ; call Rq(*reg as u8))
+            #[allow(clippy::fn_to_numeric_cast)]
+            {
+                dynasm!(ops ; .arch x64
+                    ; mov Rq(*reg as u8), QWORD snek_print as _
+                    ; call Rq(*reg as u8))
+            }
         }
     }
-    return Some(());
+    Some(())
 }
 
 pub fn i2a_slice(
@@ -198,9 +196,8 @@ pub fn i2a_slice(
     label_map: &HashMap<String, DynamicLabel>,
 ) -> Option<()> {
     for i in instrs {
-        match instr_to_asm(ops, i, &label_map) {
-            None => println!("[ERR] we got it right here: {}", i.to_string()),
-            _ => (),
+        if instr_to_asm(ops, i, label_map).is_none() {
+            println!("[ERR] we got it right here: {}", i)
         }
     }
     Some(())
