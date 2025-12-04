@@ -6,7 +6,7 @@ use crate::errors::TypeError;
 use crate::types::{Type, Type::*};
 use crate::validate::ast::{StackVar, ValidatedCall, ValidatedExpr};
 
-use super::ast::{TypedBinding, TypedCall, TypedExpr as TExpr, TypedExpr_::*};
+use super::ast::{Check, TypedBinding, TypedCall, TypedExpr as TExpr, TypedExpr_::*};
 use super::context::StrictifyCtx;
 
 pub fn strictify_expr(
@@ -33,7 +33,7 @@ fn strictify(e: ValidatedExpr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeErro
             Some(input_type) => Ok(TExpr(Input, input_type)),
             None => Err(TypeError::UntypedIdentifier("input".to_string())),
         },
-        ValidatedExpr::UnOp(checks, op, e) => {
+        ValidatedExpr::UnOp(mut checks, op, e) => {
             let expr = strictify(*e, ctx)?;
             let result_type = match op {
                 Op1::Add1 | Op1::Sub1 => {
@@ -45,10 +45,13 @@ fn strictify(e: ValidatedExpr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeErro
                 }
                 Op1::IsBool | Op1::IsNum => Bool,
             };
+            if matches!(op, Op1::Add1 | Op1::Sub1) && expr.type_() <= Num {
+                checks.0[0] = false;
+            }
             let typed_expr = TExpr(UnOp(checks, op, Box::new(expr)), result_type);
             Ok(typed_expr)
         }
-        ValidatedExpr::BinOp(checks, op, e1, e2) => {
+        ValidatedExpr::BinOp(mut checks, op, e1, e2) => {
             let lhs = strictify(*e1, ctx)?;
             let rhs = strictify(*e2, ctx)?;
             let result_type = if matches!((lhs.type_(), rhs.type_()), (Nothing, Nothing)) {
@@ -80,6 +83,24 @@ fn strictify(e: ValidatedExpr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeErro
                     }
                 }
             };
+            match op {
+                Op2::Equal => {
+                    let nums = (lhs.type_() <= Num) && (rhs.type_() <= Num);
+                    let bools = (lhs.type_() <= Bool) && (rhs.type_() <= Bool);
+                    if nums || bools {
+                        checks.0[0] = false;
+                        checks.0[1] = false;
+                    }
+                }
+                _ => {
+                    if lhs.type_() <= Num {
+                        checks.0[0] = false;
+                    }
+                    if rhs.type_() <= Num {
+                        checks.0[1] = false;
+                    }
+                }
+            }
             let typed_expr = TExpr(BinOp(checks, op, Box::new(lhs), Box::new(rhs)), result_type);
             Ok(typed_expr)
         }
@@ -108,7 +129,7 @@ fn strictify(e: ValidatedExpr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeErro
             let typed_expr = TExpr(Let(typed_bindings, Box::new(typed_body)), body_type);
             Ok(typed_expr)
         }
-        ValidatedExpr::If(cond, then_e, else_e) => {
+        ValidatedExpr::If(_, cond, then_e, else_e) => {
             let cond_typed = strictify(*cond, ctx)?;
             if cond_typed.type_() != Bool {
                 return Err(TypeError::DoesNotTC);
@@ -118,8 +139,11 @@ fn strictify(e: ValidatedExpr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeErro
             let else_typed = strictify(*else_e, ctx)?;
 
             let result_type = then_typed.type_().join(else_typed.type_());
+            let mut checks = Check::all_true();
+            checks.0[0] = false;
             let typed_expr = TExpr(
                 If(
+                    checks,
                     Box::new(cond_typed),
                     Box::new(then_typed),
                     Box::new(else_typed),
@@ -140,7 +164,7 @@ fn strictify(e: ValidatedExpr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeErro
             ctx.add_break(break_type)?;
             Ok(TExpr(Break(Box::new(value)), Nothing))
         }
-        ValidatedExpr::Set(symbol, value_expr) => {
+        ValidatedExpr::Set(mut checks, symbol, value_expr) => {
             let typed_value = strictify(*value_expr, ctx)?;
             let value_type = typed_value.type_();
             let id_type = ctx
@@ -151,7 +175,8 @@ fn strictify(e: ValidatedExpr, ctx: &mut StrictifyCtx) -> Result<TExpr, TypeErro
             } else {
                 return Err(TypeError::TypeMismatch(id_type, value_type));
             }
-            let typed_expr = TExpr(Set(symbol, Box::new(typed_value)), value_type);
+            checks.0[0] = false;
+            let typed_expr = TExpr(Set(checks, symbol, Box::new(typed_value)), value_type);
             Ok(typed_expr)
         }
         ValidatedExpr::Block(exprs) => {

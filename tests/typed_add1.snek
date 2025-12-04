@@ -1,0 +1,4 @@
+(fun (bump (x : Num)) -> Num
+  (add1 x))
+
+(bump 5)

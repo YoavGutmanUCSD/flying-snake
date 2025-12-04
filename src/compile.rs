@@ -279,7 +279,7 @@ pub fn compile_validated_expr(
             }
             Ok(base)
         }
-        ValidatedExpr::If(econd, e1, e2) => {
+        ValidatedExpr::If(checks, econd, e1, e2) => {
             let econd_instr = compile_validated_expr(econd, context.clone(), Vec::new())?;
             let e1_instr = compile_validated_expr(e1, context.clone(), Vec::new())?;
             let e2_context = CompilerContext {
@@ -291,11 +291,13 @@ pub fn compile_validated_expr(
             let else_label = format!("_if_else_{}", label_ind);
             let end_label = format!("_if_end_{}", label_ind);
             base.extend(econd_instr);
-            base.extend(type_check_loc(
-                Loc::Reg(RAX),
-                context.shared.type_err_label.clone(),
-                BranchCode::Je,
-            ));
+            if checks.is_enabled(0) {
+                base.extend(type_check_loc(
+                    Loc::Reg(RAX),
+                    context.shared.type_err_label.clone(),
+                    BranchCode::Je,
+                ));
+            }
             base.push(Instr::TwoArg(OpCode::ICmp, Loc::Reg(RAX), Val::Imm(3)));
             base.push(Instr::Jump(
                 BranchCode::Jne,
@@ -365,7 +367,7 @@ pub fn compile_validated_expr(
                 Err(CompileError::NoBreakTarget)
             }
         }
-        ValidatedExpr::Set(symbol, value) => {
+        ValidatedExpr::Set(checks, symbol, value) => {
             let name = symbol_name(symbol);
             if context.shared.keywords.contains(name) {
                 return Err(CompileError::SetKeyword);
@@ -379,6 +381,13 @@ pub fn compile_validated_expr(
                 Some(Val::Place(loc)) => {
                     let e_instrs = compile_validated_expr(value, context.clone(), Vec::new())?;
                     base.extend(e_instrs);
+                    if checks.is_enabled(0) {
+                        base.extend(type_check_loc(
+                            loc,
+                            context.shared.type_err_label.clone(),
+                            BranchCode::Jne,
+                        ));
+                    }
                     base.push(Instr::TwoArg(OpCode::IMov, loc, Val::Place(Loc::Reg(RAX))));
                     Ok(base)
                 }

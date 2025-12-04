@@ -36,10 +36,10 @@ pub enum TypedExpr_ {
     Let(Vec<TypedBinding>, Box<TypedExpr>),
     UnOp(Check<1>, Op1, Box<TypedExpr>),
     BinOp(Check<2>, Op2, Box<TypedExpr>, Box<TypedExpr>),
-    If(Box<TypedExpr>, Box<TypedExpr>, Box<TypedExpr>),
+    If(Check<1>, Box<TypedExpr>, Box<TypedExpr>, Box<TypedExpr>),
     Loop(Box<TypedExpr>),
     Break(Box<TypedExpr>),
-    Set(BindingSymbol, Box<TypedExpr>),
+    Set(Check<1>, BindingSymbol, Box<TypedExpr>),
     Block(Vec<TypedExpr>),
     Call(TypedCall),
     Print(Box<TypedExpr>),
@@ -72,14 +72,17 @@ impl From<TypedExpr> for ValidatedExpr {
                 Box::new((*left).into()),
                 Box::new((*right).into()),
             ),
-            TypedExpr_::If(cond, then_e, else_e) => ValidatedExpr::If(
+            TypedExpr_::If(checks, cond, then_e, else_e) => ValidatedExpr::If(
+                checks,
                 Box::new((*cond).into()),
                 Box::new((*then_e).into()),
                 Box::new((*else_e).into()),
             ),
             TypedExpr_::Loop(body) => ValidatedExpr::Loop(Box::new((*body).into())),
             TypedExpr_::Break(value) => ValidatedExpr::Break(Box::new((*value).into())),
-            TypedExpr_::Set(symbol, value) => ValidatedExpr::Set(symbol, Box::new((*value).into())),
+            TypedExpr_::Set(checks, symbol, value) => {
+                ValidatedExpr::Set(checks, symbol, Box::new((*value).into()))
+            }
             TypedExpr_::Block(exprs) => {
                 ValidatedExpr::Block(exprs.into_iter().map(ValidatedExpr::from).collect())
             }

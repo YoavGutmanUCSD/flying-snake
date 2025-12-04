@@ -1,0 +1,5 @@
+(let ((x (cast Num 10)))
+  (block
+    (set! x (add1 x))
+    (set! x (add1 x))
+    x))

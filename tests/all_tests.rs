@@ -11,7 +11,9 @@ success_tests! {
     typed_fact_rec: {file: "typed_fact_tail_rec", input: "5", expected: "120", typecheck: true},
     test_untyped_fun_any: {file: "untyped_fun_any", expected: "1", typecheck: true},
     test_set_subtyping: {file: "set_subtyping", input: "4", expected: "0", typecheck: true},
+    typed_set: {file: "typed_set", expected: "12", typecheck: true},
     test_ge_condition: {file: "ge_condition", expected: "0", typecheck: true},
+    typed_if_bool_param: {file: "typed_if_bool_param", expected: "1", typecheck: true},
     test_cast_any_bool: {file: "cast_any", expected: "true", typecheck: true},
     test_untyped_fun_casts: {file: "untyped_fun_casts", expected: "25", typecheck: true},
     test_loop_break: {file: "loop_break", expected: "15", typecheck: true},
@@ -28,6 +30,7 @@ static_error_tests! {
     test_static_arity: {file: "arity_mismatch", expected: "Type error", typecheck: true},
     test_eq_type_error: {file: "eq_type_error", expected: "Type error", typecheck: true},
     test_break_outside_loop: {file: "break_outside_loop", expected: "No break target", typecheck: true},
+    test_if_condition_type_error: {file: "if_condition_type_error", expected: "Type error", typecheck: true},
 }
 
 repl_tests! {

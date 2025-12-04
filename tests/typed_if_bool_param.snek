@@ -1,0 +1,4 @@
+(fun (choose (flag : Bool)) -> Num
+  (if flag 1 0))
+
+(choose true)

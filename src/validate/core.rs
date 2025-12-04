@@ -93,6 +93,7 @@ fn validate(expr: &Expr, ctx: &mut ValidateCtx<'_>) -> Result<ValidatedExpr, Com
             let then_v = validate(then_e, ctx)?;
             let else_v = validate(else_e, ctx)?;
             Ok(ValidatedExpr::If(
+                Check::all_true(),
                 Box::new(cond_v),
                 Box::new(then_v),
                 Box::new(else_v),
@@ -119,7 +120,11 @@ fn validate(expr: &Expr, ctx: &mut ValidateCtx<'_>) -> Result<ValidatedExpr, Com
                 .lookup_symbol(name)
                 .ok_or(CompileError::SetUnboundVariable)?;
             let value = validate(expr, ctx)?;
-            Ok(ValidatedExpr::Set(target, Box::new(value)))
+            Ok(ValidatedExpr::Set(
+                Check::all_true(),
+                target,
+                Box::new(value),
+            ))
         }
         Expr::Block(exprs) => {
             let mut validated = Vec::with_capacity(exprs.len());
