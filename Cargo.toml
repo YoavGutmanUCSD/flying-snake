@@ -10,6 +10,7 @@ dynasm = "2.0.0"
 dynasmrt = "2.0.0"
 im = "15.1.0"
 thiserror = "2.0.17"
+derive_more = { version = "2", features = ["display"] }
 
 [dev-dependencies]
 prettydiff = "0.6.4"

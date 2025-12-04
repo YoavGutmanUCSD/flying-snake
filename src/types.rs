@@ -1,10 +1,14 @@
-use std::{cmp::Ordering, fmt::Display};
+use std::cmp::Ordering;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, derive_more::Display)]
 pub enum Type {
+    #[display("Num")]
     Num,
+    #[display("Bool")]
     Bool,
+    #[display("Any")]
     Any,
+    #[display("Nothing")]
     Nothing,
 }
 use Type::*;
@@ -19,21 +23,6 @@ impl PartialOrd for Type {
             (Nothing, _) => Some(Ordering::Less),
             (Num, Bool) | (Bool, Num) => None,
         }
-    }
-}
-
-impl Display for Type {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Type::Num => "Num",
-                Type::Bool => "Bool",
-                Type::Any => "Any",
-                Type::Nothing => "Nothing",
-            }
-        )
     }
 }
 
@@ -55,5 +44,3 @@ impl Type {
         )
     }
 }
-
-// Historical `tc` checker has been superseded by `optimize::strictify_expr`.

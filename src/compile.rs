@@ -10,7 +10,7 @@ use dynasmrt::x64::Rq::*;
 // this can be used later to only typecheck what hasn't been typechecked already
 fn type_check_loc(loc: Loc, err_label: String, jump_cond: BranchCode) -> Vec<Instr> {
     vec![
-        Instr::TwoArg(OpCode::ITest, loc, Val::Imm(1)),
+        Instr::TwoArg(OpCode::Test, loc, Val::Imm(1)),
         Instr::Jump(jump_cond, JumpDst::Label(err_label.clone())),
     ]
 }
@@ -26,33 +26,29 @@ pub fn compile_validated_expr(
 ) -> Result<Vec<Instr>, CompileError> {
     match e {
         ValidatedExpr::Number(i) => {
-            base.push(Instr::TwoArg(
-                OpCode::IMov,
-                Loc::Reg(RAX),
-                Val::Imm(*i << 1),
-            ));
+            base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RAX), Val::Imm(*i << 1)));
             Ok(base)
         }
         ValidatedExpr::Boolean(b) => {
             let imm = if *b { 3 } else { 1 };
-            base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), Val::Imm(imm)));
+            base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RAX), Val::Imm(imm)));
             Ok(base)
         }
         ValidatedExpr::Symbol(symbol) => {
             if let Some(val) = context.symbol_map.get(&symbol.id) {
-                base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), *val));
+                base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RAX), *val));
                 return Ok(base);
             }
             let name = symbol_name(symbol);
             match context.value_map.get(name) {
-                Some(val) => base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), *val)),
+                Some(val) => base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RAX), *val)),
                 None => return Err(CompileError::UnboundIdentifier(name.to_string())),
             }
             Ok(base)
         }
         ValidatedExpr::Input => {
             match context.value_map.get("input") {
-                Some(val) => base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), *val)),
+                Some(val) => base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RAX), *val)),
                 None => return Err(CompileError::UnboundIdentifier("input".to_string())),
             }
             Ok(base)
@@ -68,7 +64,7 @@ pub fn compile_validated_expr(
                             type_check_loc(Loc::Reg(RAX), type_err_label.clone(), BranchCode::Jne);
                         base.extend(typecheck);
                     }
-                    base.push(Instr::TwoArg(OpCode::IAdd, Loc::Reg(RAX), Val::Imm(2)));
+                    base.push(Instr::TwoArg(OpCode::Add, Loc::Reg(RAX), Val::Imm(2)));
                     base.push(Instr::Jump(
                         BranchCode::Jo,
                         JumpDst::Label(overflow_err_label.clone()),
@@ -80,28 +76,28 @@ pub fn compile_validated_expr(
                             type_check_loc(Loc::Reg(RAX), type_err_label.clone(), BranchCode::Jne);
                         base.extend(typecheck);
                     }
-                    base.push(Instr::TwoArg(OpCode::ISub, Loc::Reg(RAX), Val::Imm(2)));
+                    base.push(Instr::TwoArg(OpCode::Sub, Loc::Reg(RAX), Val::Imm(2)));
                     base.push(Instr::Jump(
                         BranchCode::Jo,
                         JumpDst::Label(overflow_err_label.clone()),
                     ));
                 }
                 Op1::IsNum => {
-                    base.push(Instr::TwoArg(OpCode::ITest, Loc::Reg(RAX), Val::Imm(1)));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), Val::Imm(1)));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RCX), Val::Imm(3)));
+                    base.push(Instr::TwoArg(OpCode::Test, Loc::Reg(RAX), Val::Imm(1)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RAX), Val::Imm(1)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RCX), Val::Imm(3)));
                     base.push(Instr::TwoArg(
-                        OpCode::ICMove,
+                        OpCode::CMove,
                         Loc::Reg(RAX),
                         Val::Place(Loc::Reg(RCX)),
                     ));
                 }
                 Op1::IsBool => {
-                    base.push(Instr::TwoArg(OpCode::ITest, Loc::Reg(RAX), Val::Imm(1)));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), Val::Imm(3)));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RCX), Val::Imm(1)));
+                    base.push(Instr::TwoArg(OpCode::Test, Loc::Reg(RAX), Val::Imm(1)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RAX), Val::Imm(3)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RCX), Val::Imm(1)));
                     base.push(Instr::TwoArg(
-                        OpCode::ICMove,
+                        OpCode::CMove,
                         Loc::Reg(RAX),
                         Val::Place(Loc::Reg(RCX)),
                     ));
@@ -118,7 +114,7 @@ pub fn compile_validated_expr(
             let e2_instr = compile_validated_expr(e2, e2_context, Vec::new())?;
             base.extend(e1_instr);
             base.push(Instr::TwoArg(
-                OpCode::IMov,
+                OpCode::Mov,
                 Loc::Offset(RSP, context.si),
                 Val::Place(Loc::Reg(RAX)),
             ));
@@ -128,22 +124,22 @@ pub fn compile_validated_expr(
             if let Op2::Equal = op {
                 if checks.is_enabled(0) {
                     base.push(Instr::TwoArg(
-                        OpCode::IMov,
+                        OpCode::Mov,
                         Loc::Offset(RSP, context.si - 8),
                         Val::Place(Loc::Reg(RAX)),
                     ));
                     base.push(Instr::TwoArg(
-                        OpCode::IXor,
+                        OpCode::Xor,
                         Loc::Reg(RAX),
                         Val::Place(Loc::Offset(RSP, context.si)),
                     ));
-                    base.push(Instr::TwoArg(OpCode::ITest, Loc::Reg(RAX), Val::Imm(1)));
+                    base.push(Instr::TwoArg(OpCode::Test, Loc::Reg(RAX), Val::Imm(1)));
                     base.push(Instr::Jump(
                         BranchCode::Jne,
                         JumpDst::Label(type_err_label.clone()),
                     ));
                     base.push(Instr::TwoArg(
-                        OpCode::IMov,
+                        OpCode::Mov,
                         Loc::Reg(RAX),
                         Val::Place(Loc::Offset(RSP, context.si - 8)),
                     ));
@@ -167,7 +163,7 @@ pub fn compile_validated_expr(
             match op {
                 Op2::Plus => {
                     base.push(Instr::TwoArg(
-                        OpCode::IAdd,
+                        OpCode::Add,
                         Loc::Reg(RAX),
                         Val::Place(Loc::Offset(RSP, context.si)),
                     ));
@@ -178,7 +174,7 @@ pub fn compile_validated_expr(
                 }
                 Op2::Minus => {
                     base.push(Instr::TwoArg(
-                        OpCode::ISub,
+                        OpCode::Sub,
                         Loc::Reg(RAX),
                         Val::Place(Loc::Offset(RSP, context.si)),
                     ));
@@ -189,14 +185,14 @@ pub fn compile_validated_expr(
                     base.push(Instr::Neg(Loc::Reg(RAX)));
                 }
                 Op2::Times => {
-                    base.push(Instr::TwoArg(OpCode::IRsh, Loc::Reg(RAX), Val::Imm(1)));
+                    base.push(Instr::TwoArg(OpCode::Rsh, Loc::Reg(RAX), Val::Imm(1)));
                     base.push(Instr::TwoArg(
-                        OpCode::IRsh,
+                        OpCode::Rsh,
                         Loc::Offset(RSP, context.si),
                         Val::Imm(1),
                     ));
                     base.push(Instr::TwoArg(
-                        OpCode::IMul,
+                        OpCode::Mul,
                         Loc::Reg(RAX),
                         Val::Place(Loc::Offset(RSP, context.si)),
                     ));
@@ -204,74 +200,74 @@ pub fn compile_validated_expr(
                         BranchCode::Jo,
                         JumpDst::Label(overflow_err_label.clone()),
                     ));
-                    base.push(Instr::TwoArg(OpCode::ILsh, Loc::Reg(RAX), Val::Imm(1)));
+                    base.push(Instr::TwoArg(OpCode::Lsh, Loc::Reg(RAX), Val::Imm(1)));
                 }
                 Op2::Equal => {
                     base.push(Instr::TwoArg(
-                        OpCode::ICmp,
+                        OpCode::Cmp,
                         Loc::Offset(RSP, context.si),
                         Val::Place(Loc::Reg(RAX)),
                     ));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), Val::Imm(1)));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RCX), Val::Imm(3)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RAX), Val::Imm(1)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RCX), Val::Imm(3)));
                     base.push(Instr::TwoArg(
-                        OpCode::ICMove,
+                        OpCode::CMove,
                         Loc::Reg(RAX),
                         Val::Place(Loc::Reg(RCX)),
                     ));
                 }
                 Op2::Greater => {
                     base.push(Instr::TwoArg(
-                        OpCode::ICmp,
+                        OpCode::Cmp,
                         Loc::Offset(RSP, context.si),
                         Val::Place(Loc::Reg(RAX)),
                     ));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), Val::Imm(1)));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RCX), Val::Imm(3)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RAX), Val::Imm(1)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RCX), Val::Imm(3)));
                     base.push(Instr::TwoArg(
-                        OpCode::ICMovg,
+                        OpCode::CMovg,
                         Loc::Reg(RAX),
                         Val::Place(Loc::Reg(RCX)),
                     ));
                 }
                 Op2::GreaterEqual => {
                     base.push(Instr::TwoArg(
-                        OpCode::ICmp,
+                        OpCode::Cmp,
                         Loc::Offset(RSP, context.si),
                         Val::Place(Loc::Reg(RAX)),
                     ));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), Val::Imm(1)));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RCX), Val::Imm(3)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RAX), Val::Imm(1)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RCX), Val::Imm(3)));
                     base.push(Instr::TwoArg(
-                        OpCode::ICMovge,
+                        OpCode::CMovge,
                         Loc::Reg(RAX),
                         Val::Place(Loc::Reg(RCX)),
                     ));
                 }
                 Op2::Less => {
                     base.push(Instr::TwoArg(
-                        OpCode::ICmp,
+                        OpCode::Cmp,
                         Loc::Offset(RSP, context.si),
                         Val::Place(Loc::Reg(RAX)),
                     ));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), Val::Imm(1)));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RCX), Val::Imm(3)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RAX), Val::Imm(1)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RCX), Val::Imm(3)));
                     base.push(Instr::TwoArg(
-                        OpCode::ICMovl,
+                        OpCode::CMovl,
                         Loc::Reg(RAX),
                         Val::Place(Loc::Reg(RCX)),
                     ));
                 }
                 Op2::LessEqual => {
                     base.push(Instr::TwoArg(
-                        OpCode::ICmp,
+                        OpCode::Cmp,
                         Loc::Offset(RSP, context.si),
                         Val::Place(Loc::Reg(RAX)),
                     ));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RAX), Val::Imm(1)));
-                    base.push(Instr::TwoArg(OpCode::IMov, Loc::Reg(RCX), Val::Imm(3)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RAX), Val::Imm(1)));
+                    base.push(Instr::TwoArg(OpCode::Mov, Loc::Reg(RCX), Val::Imm(3)));
                     base.push(Instr::TwoArg(
-                        OpCode::ICMovle,
+                        OpCode::CMovle,
                         Loc::Reg(RAX),
                         Val::Place(Loc::Reg(RCX)),
                     ));
@@ -298,7 +294,7 @@ pub fn compile_validated_expr(
                     BranchCode::Je,
                 ));
             }
-            base.push(Instr::TwoArg(OpCode::ICmp, Loc::Reg(RAX), Val::Imm(3)));
+            base.push(Instr::TwoArg(OpCode::Cmp, Loc::Reg(RAX), Val::Imm(3)));
             base.push(Instr::Jump(
                 BranchCode::Jne,
                 JumpDst::Label(else_label.clone()),
@@ -319,7 +315,7 @@ pub fn compile_validated_expr(
                 binding_instrs =
                     compile_validated_expr(&binding.value, context.clone(), binding_instrs)?;
                 binding_instrs.push(Instr::TwoArg(
-                    OpCode::IMov,
+                    OpCode::Mov,
                     Loc::Offset(RSP, context.si),
                     Val::Place(Loc::Reg(RAX)),
                 ));
@@ -388,7 +384,7 @@ pub fn compile_validated_expr(
                             BranchCode::Jne,
                         ));
                     }
-                    base.push(Instr::TwoArg(OpCode::IMov, loc, Val::Place(Loc::Reg(RAX))));
+                    base.push(Instr::TwoArg(OpCode::Mov, loc, Val::Place(Loc::Reg(RAX))));
                     Ok(base)
                 }
                 Some(Val::Imm(_)) => Err(CompileError::Other(
@@ -414,7 +410,7 @@ pub fn compile_validated_expr(
             let original_context = -context.si;
             base.push(Instr::MovLabel(RAX, end_label.clone()));
             base.push(Instr::TwoArg(
-                OpCode::IMov,
+                OpCode::Mov,
                 Loc::Offset(RSP, context.si),
                 Val::Place(Loc::Reg(RAX)),
             ));
@@ -423,14 +419,14 @@ pub fn compile_validated_expr(
                 let e_instrs = compile_validated_expr(arg, context.clone(), Vec::new())?;
                 base.extend(e_instrs);
                 base.push(Instr::TwoArg(
-                    OpCode::IMov,
+                    OpCode::Mov,
                     Loc::Offset(RSP, context.si),
                     Val::Place(Loc::Reg(RAX)),
                 ));
                 context.si -= 8;
             }
             base.push(Instr::TwoArg(
-                OpCode::ISub,
+                OpCode::Sub,
                 Loc::Reg(RSP),
                 Val::Imm(original_context as i64),
             ));
@@ -440,7 +436,7 @@ pub fn compile_validated_expr(
             ));
             base.push(Instr::Label(end_label));
             base.push(Instr::TwoArg(
-                OpCode::IAdd,
+                OpCode::Add,
                 Loc::Reg(RSP),
                 Val::Imm((original_context - 8) as i64),
             ));
@@ -451,28 +447,28 @@ pub fn compile_validated_expr(
             let e_instrs = compile_validated_expr(value, context, Vec::new())?;
             base.extend(e_instrs);
             base.push(Instr::TwoArg(
-                OpCode::IMov,
+                OpCode::Mov,
                 Loc::Offset(RSP, si),
                 Val::Place(Loc::Reg(RDI)),
             ));
             base.push(Instr::TwoArg(
-                OpCode::IMov,
+                OpCode::Mov,
                 Loc::Reg(RDI),
                 Val::Place(Loc::Reg(RAX)),
             ));
             base.push(Instr::TwoArg(
-                OpCode::ISub,
+                OpCode::Sub,
                 Loc::Reg(RSP),
                 Val::Imm((-si + 8) as i64),
             ));
             base.push(Instr::CallPrint(RAX));
             base.push(Instr::TwoArg(
-                OpCode::IMov,
+                OpCode::Mov,
                 Loc::Reg(RDI),
                 Val::Place(Loc::Offset(RSP, 8)),
             ));
             base.push(Instr::TwoArg(
-                OpCode::IAdd,
+                OpCode::Add,
                 Loc::Reg(RSP),
                 Val::Imm((-si + 8) as i64),
             ));

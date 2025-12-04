@@ -113,7 +113,7 @@ fn exert(emitter: &mut EaterOfWords, input: Option<i64>) -> Result<ReturnValue, 
 }
 
 fn snek_format(val: ReturnValue) -> Result<(), std::io::Error> {
-    println!("{}", val.to_string());
+    println!("{}", val);
     Ok(())
 }
 
@@ -400,7 +400,7 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         }
                     }
                     let base = vec![Instr::TwoArg(
-                        OpCode::IMov,
+                        OpCode::Mov,
                         Loc::Reg(Rq::RBP),
                         Val::Place(Loc::Reg(Rq::RSP)),
                     )];
@@ -711,7 +711,7 @@ fn main() -> std::io::Result<()> {
 
     // compile top level expression
     let first_instr = vec![Instr::TwoArg(
-        OpCode::IMov,
+        OpCode::Mov,
         Loc::Reg(Rq::RBP),
         Val::Place(Loc::Reg(Rq::RSP)),
     )];

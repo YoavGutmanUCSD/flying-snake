@@ -151,23 +151,23 @@ pub fn instr_to_asm(
             return jmp_to_asm(ops, branch, dst, label_table);
         }
         _a @ Instr::TwoArg(op, dst, src) => match op {
-            OpCode::IMov => {
+            OpCode::Mov => {
                 // println!("running: {}", a.to_string());
                 instr_to_asm!(ops, mov, dst, src)
             }
-            OpCode::IAdd => instr_to_asm!(ops, add, dst, src),
-            OpCode::ISub => instr_to_asm!(ops, sub, dst, src),
-            OpCode::IMul => instr_to_asm!(ops, imul, dst, src),
-            OpCode::IXor => instr_to_asm!(ops, xor, dst, src),
-            OpCode::ICmp => instr_to_asm!(ops, cmp, dst, src),
-            OpCode::ITest => instr_to_asm!(ops, test, dst, src),
-            OpCode::ICMove => cmov_to_asm!(ops, cmove, dst, src),
-            OpCode::ICMovg => cmov_to_asm!(ops, cmovg, dst, src),
-            OpCode::ICMovge => cmov_to_asm!(ops, cmovge, dst, src),
-            OpCode::ICMovl => cmov_to_asm!(ops, cmovl, dst, src),
-            OpCode::ICMovle => cmov_to_asm!(ops, cmovle, dst, src),
-            OpCode::ILsh => shift_to_asm!(ops, shl, dst, src),
-            OpCode::IRsh => shift_to_asm!(ops, shr, dst, src),
+            OpCode::Add => instr_to_asm!(ops, add, dst, src),
+            OpCode::Sub => instr_to_asm!(ops, sub, dst, src),
+            OpCode::Mul => instr_to_asm!(ops, imul, dst, src),
+            OpCode::Xor => instr_to_asm!(ops, xor, dst, src),
+            OpCode::Cmp => instr_to_asm!(ops, cmp, dst, src),
+            OpCode::Test => instr_to_asm!(ops, test, dst, src),
+            OpCode::CMove => cmov_to_asm!(ops, cmove, dst, src),
+            OpCode::CMovg => cmov_to_asm!(ops, cmovg, dst, src),
+            OpCode::CMovge => cmov_to_asm!(ops, cmovge, dst, src),
+            OpCode::CMovl => cmov_to_asm!(ops, cmovl, dst, src),
+            OpCode::CMovle => cmov_to_asm!(ops, cmovle, dst, src),
+            OpCode::Lsh => shift_to_asm!(ops, shl, dst, src),
+            OpCode::Rsh => shift_to_asm!(ops, shr, dst, src),
         },
         Instr::Neg(dst) => instr_to_asm!(ops, neg, dst),
         Instr::Ret => dynasm!(ops ; .arch x64 ; ret),
@@ -197,7 +197,7 @@ pub fn i2a_slice(
 ) -> Option<()> {
     for i in instrs {
         if instr_to_asm(ops, i, label_map).is_none() {
-            println!("[ERR] we got it right here: {}", i.to_string())
+            println!("[ERR] we got it right here: {}", i)
         }
     }
     Some(())

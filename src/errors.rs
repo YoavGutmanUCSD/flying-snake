@@ -53,6 +53,7 @@ pub enum CompileError {
     Other(String),
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Error)]
 pub enum RuntimeError {
     #[error("Invalid arguments to one or more functions.")]

@@ -5,18 +5,12 @@ use dynasmrt::x64::Assembler;
 use dynasmrt::{dynasm, AssemblyOffset, DynasmApi, DynasmLabelApi};
 use std::collections::HashMap;
 
+#[derive(derive_more::Display)]
 pub enum ReturnValue {
+    #[display("{_0}")]
     Num(i64),
+    #[display("{_0}")]
     Bool(bool),
-}
-
-impl ToString for ReturnValue {
-    fn to_string(&self) -> String {
-        match self {
-            ReturnValue::Num(i) => format!("{i}"),
-            ReturnValue::Bool(b) => format!("{b}"),
-        }
-    }
 }
 
 // this struct will own the assembler and control all usage of it
