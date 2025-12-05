@@ -327,11 +327,17 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                             for (symbol, t) in start_symbol_env.iter() {
                                 fn_env = fn_env.update(*symbol, *t);
                             }
-                            let typed = strictify_expr(validated_fn.body, &fn_env, &tentative_functions, None);
+                            let typed = strictify_expr(
+                                validated_fn.body,
+                                &fn_env,
+                                &tentative_functions,
+                                None,
+                            );
                             validated_fn.body = match typed {
                                 Ok(typed_fn) => {
                                     if !typed_fn.type_().is_subtype_of(fn_type) {
-                                        let err = TypeError::TypeMismatch(fn_type, typed_fn.type_());
+                                        let err =
+                                            TypeError::TypeMismatch(fn_type, typed_fn.type_());
                                         eprintln!("{}", std::io::Error::from(err));
                                         continue;
                                     }
