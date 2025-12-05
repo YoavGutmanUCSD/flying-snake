@@ -258,10 +258,10 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                     let res = compile_validated_expr(&validated, branch_context, Vec::new())
                         .map_err(std::io::Error::from)
                         .and_then(|vec| {
-                            println!("let {} =", id);
-                            for i in vec.iter() {
-                                println!("{}", i.to_string());
-                            }
+                            // println!("let {} =", id);
+                            // for i in vec.iter() {
+                            //     println!("{}", i.to_string());
+                            // }
                             consume_dynasm(&mut emitter, code_label, vec)
                         })
                         .bind(|consumer| exert_repl(consumer, &mut define_vec));
@@ -371,10 +371,10 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         let res = compile_validated_fn(f, &validated_fn, fn_context)
                             .map_err(std::io::Error::from) // enter the io ecosystem
                             .and_then(|(name, instrs)| {
-                                println!("{}:", name);
-                                for i in instrs.iter() {
-                                    println!("\t{}", i.to_string())
-                                }
+                                // println!("{}:", name);
+                                // for i in instrs.iter() {
+                                //     println!("\t{}", i.to_string())
+                                // }
                                 consume_dynasm(&mut emitter, name, instrs)
                             });
                         if let Err(e) = res {
@@ -439,9 +439,9 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                     let res = compile_validated_expr(&validated, local_context, base)
                         .map_err(std::io::Error::from) // enter the io ecosystem
                         .bind(|vec| {
-                            for i in vec.iter() {
-                                println!("{}", i.to_string());
-                            }
+                            // for i in vec.iter() {
+                            //     println!("{}", i.to_string());
+                            // }
                             consume_dynasm(&mut emitter, code_label, vec)
                         })
                         .bind(|consumer| exert_repl(consumer, &mut define_vec))
