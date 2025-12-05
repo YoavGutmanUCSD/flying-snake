@@ -238,20 +238,32 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                     };
 
                     if is_typed {
-                        if let Err(e) = main_tc(
-                            &validated,
+                        let typed = strictify_expr(
+                            validated,
                             &start_symbol_env,
-                            &branch_context.shared.function_definitions,
+                            &local_context.shared.function_definitions,
                             None,
-                        ) {
-                            eprintln!("{}", std::io::Error::from(e));
-                            continue;
+                        );
+                        match typed {
+                            Err(e) => {
+                                eprintln!("{}", std::io::Error::from(e));
+                                continue;
+                            }
+                            Ok(typed_expr) => {
+                                validated = optimize(typed_expr, &local_context.symbol_map).into();
+                            }
                         }
                     }
 
                     let res = compile_validated_expr(&validated, branch_context, Vec::new())
                         .map_err(std::io::Error::from)
-                        .and_then(|vec| consume_dynasm(&mut emitter, code_label, vec))
+                        .and_then(|vec| {
+                            println!("let {} =", id);
+                            for i in vec.iter() {
+                                println!("{}", i.to_string());
+                            }
+                            consume_dynasm(&mut emitter, code_label, vec)
+                        })
                         .bind(|consumer| exert_repl(consumer, &mut define_vec));
                     match res {
                         Err(e) => eprintln!("{}", e),
@@ -293,7 +305,7 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         let tentative_functions =
                             functions.update(f.name.clone(), (f_args, f.fn_type));
 
-                        let validated_fn = match validate_function_body(
+                        let mut validated_fn = match validate_function_body(
                             &f.body,
                             &tentative_functions,
                             &f.args,
@@ -315,16 +327,15 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                             for (symbol, t) in start_symbol_env.iter() {
                                 fn_env = fn_env.update(*symbol, *t);
                             }
-
-                            match main_tc(&validated_fn.body, &fn_env, &tentative_functions, None) {
-                                Ok(e_type) => {
-                                    if !e_type.is_subtype_of(fn_type) {
-                                        let err = TypeError::TypeMismatch(fn_type, e_type);
+                            let typed = strictify_expr(validated_fn.body, &fn_env, &tentative_functions, None);
+                            validated_fn.body = match typed {
+                                Ok(typed_fn) => {
+                                    if !typed_fn.type_().is_subtype_of(fn_type) {
+                                        let err = TypeError::TypeMismatch(fn_type, typed_fn.type_());
                                         eprintln!("{}", std::io::Error::from(err));
                                         continue;
-                                    } else {
-                                        // println!("Function will evaluate to: {}", e_type.to_string());
                                     }
+                                    optimize(typed_fn, &local_context.symbol_map).into()
                                 }
                                 Err(e) => {
                                     eprintln!("{}", std::io::Error::from(e));
@@ -335,6 +346,9 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
 
                         // save tentative functions, now that it is good
                         functions = tentative_functions;
+
+                        // freeze validated_fn so it can't be modified later
+                        let validated_fn = validated_fn;
 
                         // create fn context
                         let shared_fn_context = SharedContext {
@@ -350,7 +364,13 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         // compile function and send to emitter
                         let res = compile_validated_fn(f, &validated_fn, fn_context)
                             .map_err(std::io::Error::from) // enter the io ecosystem
-                            .and_then(|(name, instrs)| consume_dynasm(&mut emitter, name, instrs));
+                            .and_then(|(name, instrs)| {
+                                println!("{}:", name);
+                                for i in instrs.iter() {
+                                    println!("\t{}", i.to_string())
+                                }
+                                consume_dynasm(&mut emitter, name, instrs)
+                            });
                         if let Err(e) = res {
                             eprintln!("{}", e);
                         } else {
