@@ -10,7 +10,12 @@ use super::ast::TypedCall;
 use super::ast::{TypedExpr as TExpr, TypedExpr_::*};
 use crate::validate::ast::StackVar;
 
-fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, volatile_set: &HashSet<StackVar>, changed: &mut bool) -> TExpr {
+fn inline_const(
+    e: TExpr,
+    env: &HashMap<StackVar, Val>,
+    volatile_set: &HashSet<StackVar>,
+    changed: &mut bool,
+) -> TExpr {
     let (expr, expr_type) = (e.0, e.1);
     match expr {
         Let(bindings, let_expr) => {
@@ -72,7 +77,11 @@ fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, volatile_set: &HashSet<S
             TExpr(Call(new_call), expr_type)
         }
         UnOp(checks, op, e) => TExpr(
-            UnOp(checks, op, Box::new(inline_const(*e, env, volatile_set, changed))),
+            UnOp(
+                checks,
+                op,
+                Box::new(inline_const(*e, env, volatile_set, changed)),
+            ),
             expr_type,
         ),
         BinOp(checks, op, e1, e2) => TExpr(
@@ -102,18 +111,36 @@ fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, volatile_set: &HashSet<S
             expr_type,
         ),
         Loop(loop_expr) => TExpr(
-            Loop(Box::new(inline_const(*loop_expr, env, volatile_set, changed))),
+            Loop(Box::new(inline_const(
+                *loop_expr,
+                env,
+                volatile_set,
+                changed,
+            ))),
             expr_type,
         ),
         Break(break_expr) => TExpr(
-            Break(Box::new(inline_const(*break_expr, env, volatile_set, changed))),
+            Break(Box::new(inline_const(
+                *break_expr,
+                env,
+                volatile_set,
+                changed,
+            ))),
             expr_type,
         ),
         Print(print_expr) => TExpr(
-            Print(Box::new(inline_const(*print_expr, env, volatile_set, changed))),
+            Print(Box::new(inline_const(
+                *print_expr,
+                env,
+                volatile_set,
+                changed,
+            ))),
             expr_type,
         ),
-        Cast(expr) => TExpr(Cast(Box::new(inline_const(*expr, env, volatile_set, changed))), expr_type),
+        Cast(expr) => TExpr(
+            Cast(Box::new(inline_const(*expr, env, volatile_set, changed))),
+            expr_type,
+        ),
         _ => TExpr(expr, expr_type),
     }
 }
@@ -256,7 +283,7 @@ fn find_volatiles(e: &TExpr) -> HashSet<StackVar> {
             Cast(body) => {
                 expr_stack.push(body);
             }
-            _ => ()
+            _ => (),
         }
     }
     volatiles
