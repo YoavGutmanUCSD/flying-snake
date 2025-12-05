@@ -112,13 +112,13 @@ fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, changed: &mut bool) -> T
     }
 }
 
-fn simplify(e: TExpr, env: &HashMap<StackVar, Type>, changed: &mut bool) -> TExpr {
+fn simplify(e: TExpr, changed: &mut bool) -> TExpr {
     let (expr, expr_type) = (e.0, e.1);
     match expr {
         Block(exprs) => {
             let good_exprs = exprs
                 .into_iter()
-                .map(|expr| simplify(expr, env, changed))
+                .map(|expr| simplify(expr, changed))
                 .collect::<Vec<TExpr>>();
             TExpr(Block(good_exprs), expr_type)
         }
@@ -126,7 +126,7 @@ fn simplify(e: TExpr, env: &HashMap<StackVar, Type>, changed: &mut bool) -> TExp
             let good_args = typed_call
                 .args
                 .into_iter()
-                .map(|expr| simplify(expr, env, changed))
+                .map(|expr| simplify(expr, changed))
                 .collect::<Vec<TExpr>>();
             let new_call = TypedCall {
                 args: good_args,
@@ -153,8 +153,8 @@ fn simplify(e: TExpr, env: &HashMap<StackVar, Type>, changed: &mut bool) -> TExp
             BinOp(
                 checks,
                 op,
-                Box::new(simplify(*e1, env, changed)),
-                Box::new(simplify(*e2, env, changed)),
+                Box::new(simplify(*e1, changed)),
+                Box::new(simplify(*e2, changed)),
             ),
             expr_type,
         ),
@@ -170,51 +170,38 @@ fn simplify(e: TExpr, env: &HashMap<StackVar, Type>, changed: &mut bool) -> TExp
             _ => TExpr(
                 If(
                     checks,
-                    Box::new(simplify(*econd, env, changed)),
-                    Box::new(simplify(*e1, env, changed)),
-                    Box::new(simplify(*e2, env, changed)),
+                    Box::new(simplify(*econd, changed)),
+                    Box::new(simplify(*e1, changed)),
+                    Box::new(simplify(*e2, changed)),
                 ),
                 expr_type,
             ),
         },
         Set(checks, set_id, set_expr) => TExpr(
-            Set(checks, set_id, Box::new(simplify(*set_expr, env, changed))),
+            Set(checks, set_id, Box::new(simplify(*set_expr, changed))),
             expr_type,
         ),
-        Loop(loop_expr) => TExpr(
-            Loop(Box::new(simplify(*loop_expr, env, changed))),
-            expr_type,
-        ),
-        Break(break_expr) => TExpr(
-            Break(Box::new(simplify(*break_expr, env, changed))),
-            expr_type,
-        ),
-        Print(print_expr) => TExpr(
-            Print(Box::new(simplify(*print_expr, env, changed))),
-            expr_type,
-        ),
+        Loop(loop_expr) => TExpr(Loop(Box::new(simplify(*loop_expr, changed))), expr_type),
+        Break(break_expr) => TExpr(Break(Box::new(simplify(*break_expr, changed))), expr_type),
+        Print(print_expr) => TExpr(Print(Box::new(simplify(*print_expr, changed))), expr_type),
         Let(bindings, let_expr) => {
             let mut good_bindings: Vec<TypedBinding> = Vec::with_capacity(bindings.len());
             for binding in bindings.into_iter() {
-                let simplified_expr = simplify(binding.value, env, changed);
+                let simplified_expr = simplify(binding.value, changed);
                 let new_binding = TypedBinding {
                     value: simplified_expr,
                     ..binding
                 };
                 good_bindings.push(new_binding);
             }
-            let good_let_expr = simplify(*let_expr, env, changed);
+            let good_let_expr = simplify(*let_expr, changed);
             TExpr(Let(good_bindings, Box::new(good_let_expr)), expr_type)
         }
         expr => TExpr(expr, expr_type),
     }
 }
 
-pub fn optimize(
-    e: TExpr,
-    type_env: &HashMap<StackVar, Type>,
-    define_env: &HashMap<StackVar, Val>,
-) -> TExpr {
+pub fn optimize(e: TExpr, define_env: &HashMap<StackVar, Val>) -> TExpr {
     // if this is ever false after the loop, can return.
     let mut change_counter: bool;
     let mut final_expr = e;
@@ -222,7 +209,7 @@ pub fn optimize(
     // loop should be as follows
     loop {
         change_counter = false;
-        final_expr = simplify(final_expr, type_env, &mut change_counter);
+        final_expr = simplify(final_expr, &mut change_counter);
         final_expr = inline_const(final_expr, define_env, &mut change_counter);
         // add more optimizations after or before this one. should be plug and play
 
