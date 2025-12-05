@@ -4,7 +4,8 @@ use crate::validate::ast::StackVar;
 use dynasmrt::x64::Rq;
 use im::hashset::HashSet;
 use im::HashMap;
-use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 pub const KEYWORDS: &[&str] = &[
     "let", "if", "break", "loop", "+", "-", "*", "=", "<", ">", "<=", ">=", "set!", "block", "fun",
@@ -13,35 +14,35 @@ pub const KEYWORDS: &[&str] = &[
 pub type FnDefs = im::HashMap<String, (Vec<(String, Type)>, Type)>;
 
 pub struct LabelNumGenerator {
-    count: Cell<i32>,
+    count: AtomicUsize,
 }
 
 impl LabelNumGenerator {
-    pub fn get(&self) -> i32 {
-        let temp: i32 = self.count.get();
-        self.count.set(temp + 1);
-        temp
+    pub fn get(&self) -> usize {
+        let old_count = self.count.fetch_add(1, Ordering::SeqCst);
+        old_count + 1
     }
+
     pub fn new() -> LabelNumGenerator {
         LabelNumGenerator {
-            count: Cell::new(0),
+            count: AtomicUsize::new(0),
         }
     }
 }
 
 // this struct will replace most arguments to compile_to_instrs
 #[derive(Clone)]
-pub struct CompilerContext<'a> {
+pub struct CompilerContext {
     pub value_map: HashMap<String, Val>,
     pub symbol_map: HashMap<StackVar, Val>,
     pub si: i32,
     pub enclosing_loop_label: Option<String>,
-    pub shared: &'a SharedContext<'a>,
+    pub shared: Arc<SharedContext>,
 }
 
 #[derive(Clone)]
-pub struct SharedContext<'a> {
-    pub label_gen: &'a LabelNumGenerator,
+pub struct SharedContext {
+    pub label_gen: &'static LabelNumGenerator,
     pub keywords: HashSet<String>,
     pub type_err_label: String,
     pub overflow_err_label: String,
@@ -49,15 +50,15 @@ pub struct SharedContext<'a> {
     pub function_definitions: FnDefs,
 }
 
-impl<'a> SharedContext<'a> {
+impl SharedContext {
     pub fn keyword_set() -> HashSet<String> {
         KEYWORDS.iter().map(|kw| kw.to_string()).collect()
     }
 
     pub fn default(
-        label_gen: &'a LabelNumGenerator,
+        label_gen: &'static LabelNumGenerator,
         function_definitions: FnDefs,
-    ) -> SharedContext<'a> {
+    ) -> SharedContext {
         SharedContext {
             label_gen,
             keywords: SharedContext::keyword_set(),
@@ -69,8 +70,8 @@ impl<'a> SharedContext<'a> {
     }
 }
 
-impl<'a> CompilerContext<'a> {
-    pub fn new(shared_context: &'a SharedContext, has_input: bool) -> CompilerContext<'a> {
+impl CompilerContext {
+    pub fn new(shared_context: Arc<SharedContext>, has_input: bool) -> CompilerContext {
         let value_map: im::HashMap<String, Val> = if has_input {
             im::HashMap::new().update("input".to_string(), Val::Place(Loc::Offset(Rq::RDI, 0)))
         } else {

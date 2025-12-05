@@ -3,7 +3,7 @@ use crate::instr::{BranchCode, Instr, JumpDst, Loc, OpCode, Val};
 use dynasmrt::{dynasm, DynamicLabel, DynasmApi, DynasmLabelApi};
 use std::collections::HashMap;
 
-fn snek_print(i: i64) -> i64 {
+extern "C" fn snek_print(i: i64) -> i64 {
     match i & 7 {
         0b111 => match (i >> 3) & 7 {
             0 => eprintln!("Invalid arguments to one or more functions."),
@@ -82,7 +82,7 @@ macro_rules! instr_to_asm {
             (Loc::Offset(reg1, i), Val::Place(Loc::Reg(reg2))) => dynasm!($ops ; .arch x64 ; mov QWORD [Rq(*reg1 as u8) + *i], Rq(*reg2 as u8)),
 
             (Loc::Reg(reg1), Val::Place(Loc::Reg(reg2))) => dynasm!($ops ; .arch x64 ; mov Rq(*reg1 as u8), Rq(*reg2 as u8)),
-            _ => panic!("Invalid instruction, per regulation. What did you write, Yoav?"),
+            _ => panic!("Invalid instruction `mov {} {}`, per regulation. What did you write, Yoav?", $dst, $src),
         }
     };
     ($ops:expr, $code:ident, $dst:expr, $src:expr) => {
@@ -152,7 +152,6 @@ pub fn instr_to_asm(
         }
         _a @ Instr::TwoArg(op, dst, src) => match op {
             OpCode::Mov => {
-                // println!("running: {}", a.to_string());
                 instr_to_asm!(ops, mov, dst, src)
             }
             OpCode::Add => instr_to_asm!(ops, add, dst, src),
@@ -186,6 +185,10 @@ pub fn instr_to_asm(
                     ; call Rq(*reg as u8))
             }
         }
+        Instr::MovRegImm64(reg, val) => {
+            dynasm!(ops ; .arch x64 ; mov Rq(*reg as u8), QWORD *val)
+        }
+        Instr::CallRax => dynasm!(ops ; .arch x64 ; call rax),
     }
     Some(())
 }

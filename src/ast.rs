@@ -42,6 +42,7 @@ pub enum Expr {
 //     VarArg(String, Vec<String>, Expr)
 // }
 
+#[derive(Clone)]
 pub struct SnekFn {
     pub name: String,
     pub args: Vec<(String, Type)>,

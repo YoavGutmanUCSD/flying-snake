@@ -11,6 +11,10 @@ dynasmrt = "2.0.0"
 im = "15.1.0"
 thiserror = "2.0.17"
 derive_more = { version = "2", features = ["display"] }
+lazy_static = "1.5.0"
+tracing = "0.1.43"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+rustyline = "10.1.0"
 
 [dev-dependencies]
 prettydiff = "0.6.4"

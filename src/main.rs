@@ -10,33 +10,56 @@ mod instr;
 mod jit;
 mod optimize;
 mod parse;
+mod repl;
+mod tracing;
 mod types;
 mod validate;
 
+use ::tracing::debug;
 use ast::{Expr, SnekFn};
 use compile::{compile_validated_expr, compile_validated_fn};
 use context::FnDefs;
 use context::{CompilerContext, LabelNumGenerator, SharedContext};
-use errors::{CompileError, HomogenousBind, ParseError, RuntimeError, TypeError};
+use errors::{CompileError, ParseError, RuntimeError, TypeError};
 use instr::{Instr, Loc, OpCode, Val, CAST_ERROR, OVERFLOW_ERROR, TYPE_ERROR};
-use jit::{EaterOfWords, ReturnValue};
+use jit::{snek_end, EaterOfWords, ReturnValue};
+use lazy_static::lazy_static;
 use optimize::strictify_expr;
 use parse::{parse_expr, parse_fn};
 use sexp::Atom::*;
 use sexp::*;
 use std::env;
 use std::fs::File;
-use std::io;
 use std::io::prelude::*;
 use std::io::Error;
+use std::ops::ControlFlow;
+use std::sync::{Arc, RwLock};
 use types::Type;
-use validate::ast::{BindingSymbol, StackVar, SymbolKind, ValidatedExpr};
+use validate::ast::{BindingSymbol, StackVar, ValidatedExpr};
 use validate::{
-    validate_expr, validate_expr_with_bindings, validate_function_body, ValidatedFunction,
+    validate_expr, validate_function_body, ValidatedFunction,
     ValidationInputs,
 };
 
 use dynasmrt::x64::Rq;
+
+use crate::repl::repl_new;
+use crate::tracing::init_tracing;
+
+lazy_static! {
+    static ref label_gen: LabelNumGenerator = LabelNumGenerator::new();
+    static ref emitter: RwLock<EaterOfWords> = RwLock::new(EaterOfWords::new());
+    static ref stub_space: RwLock<Vec<JitCompilerSlot>> = RwLock::new(vec![]);
+}
+
+struct JitCompilerSlot {
+    args: Vec<i64>,
+    fm: SnekFn,
+    validated_fn: ValidatedFunction,
+    start_symbol_env: im::HashMap<StackVar, Type>,
+    fn_context: CompilerContext,
+    tentative_functions: FnDefs,
+}
 
 enum ExprKind {
     Normal(Expr),
@@ -86,29 +109,32 @@ fn parse_sexp(s: String) -> Result<Sexp, std::io::Error> {
 
 // returns std::io::Error because i'm not sure what to do with this error yet.
 // TODO: better error reporting from JIT failure. future commit.
-fn consume_dynasm(
-    emitter: &mut EaterOfWords,
-    name: String,
-    mut instrs: Vec<Instr>,
-) -> Result<&mut EaterOfWords, std::io::Error> {
+fn consume_dynasm(name: String, mut instrs: Vec<Instr>) -> Result<(), std::io::Error> {
     instrs.push(Instr::Ret);
-    match emitter.consume(name, instrs) {
-        Some(()) => Ok(emitter),
-        None => Err(Error::other("Dynasm failed.".to_string())),
-    }
+    emitter
+        .write()
+        .unwrap()
+        .consume_slice(name, &instrs)
+        .ok_or_else(|| Error::other("Dynasm failed.".to_string()))
 }
 
-fn exert(emitter: &mut EaterOfWords, input: Option<i64>) -> Result<ReturnValue, RuntimeError> {
-    emitter.digest();
-    let res = match input {
-        None => emitter.exert(None),
-        Some(i) => {
-            let mut x = i;
-            let pi: *mut i64 = &mut x;
-            emitter.exert(Some(pi))
-        }
+fn exert(input: Option<i64>) -> Result<ReturnValue, RuntimeError> {
+    let entry = {
+        let mut emitter_guard = emitter.write().unwrap();
+        emitter_guard.digest();
+        emitter_guard.current_offset()
     };
-    emitter.discard();
+
+    let res = match input {
+        Some(i) => {
+            let mut tagged = i;
+            let pi: *mut i64 = &mut tagged;
+            snek_end(invoke_entry(entry, Some(pi)))
+        }
+        None => snek_end(invoke_entry(entry, None)),
+    };
+
+    emitter.write().unwrap().discard();
     res
 }
 
@@ -126,15 +152,32 @@ fn create_block(name: &str, instrs: &[Instr]) -> String {
     format!("\n{}:\n{}", name, code)
 }
 
-fn exert_repl(
-    emitter: &mut EaterOfWords,
-    vals: &mut Vec<i64>,
-) -> Result<ReturnValue, RuntimeError> {
-    emitter.digest();
-    let pi: *mut i64 = vals.as_mut_ptr();
-    let res = emitter.exert(Some(pi));
-    emitter.discard();
+fn exert_repl(vals: &mut Vec<i64>) -> Result<ReturnValue, RuntimeError> {
+    let entry = {
+        let mut emitter_guard = emitter.write().unwrap();
+        emitter_guard.digest();
+        emitter_guard.current_offset()
+    };
+
+    let res = snek_end(invoke_entry(entry, Some(vals.as_mut_ptr())));
+    emitter.write().unwrap().discard();
     res
+}
+
+fn invoke_entry(entry: *const u8, arg: Option<*mut i64>) -> i64 {
+    unsafe {
+        match arg {
+            Some(ptr) => {
+                let jitted_fn: extern "C" fn(*mut i64) -> i64 =
+                    std::mem::transmute(entry);
+                jitted_fn(ptr)
+            }
+            None => {
+                let jitted_fn: extern "C" fn() -> i64 = std::mem::transmute(entry);
+                jitted_fn()
+            }
+        }
+    }
 }
 
 fn create_fn_tc_env(
@@ -147,295 +190,6 @@ fn create_fn_tc_env(
         .fold(im::HashMap::new(), |acc, (symbol, (_, t))| {
             acc.update(symbol.id, *t)
         })
-}
-
-fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool) {
-    let mut input = String::new();
-    let mut define_vals: im::HashMap<String, Val> = im::HashMap::new();
-    let mut define_symbols: im::HashMap<String, BindingSymbol> = im::HashMap::new();
-    let mut symbol_slots: im::HashMap<StackVar, Val> = im::HashMap::new();
-    let mut next_symbol_id: u32 = 0;
-
-    // define'd variables stored in a vector
-    let mut define_vec: Vec<i64> = Vec::new();
-    let mut place: i32 = 0; // index of next available slot
-
-    // map: function name -> (list of (arg, arg_type), function type)
-    let mut functions: FnDefs = im::HashMap::new();
-
-    // map: define'd variable name -> variable type
-    let mut start_symbol_env = im::HashMap::new();
-
-    loop {
-        // 0. print little > character
-        print!("> ");
-        let _ = io::stdout().flush();
-
-        // 1. read from output
-        let read_result = io::stdin().read_line(&mut input);
-        if let Err(e) = read_result {
-            println!("Cannot read input: {:?}. Exiting...", e);
-            // continue;
-            return;
-        }
-
-        // 2. parse input into sexp, then delete old buffer
-        let sexp_maybe = parse(input.trim());
-        input.clear();
-
-        // 3. create context
-        let local_map = define_vals
-            .iter()
-            .fold(context.value_map.clone(), |acc, (key, val)| {
-                acc.update(key.to_string(), *val)
-            });
-
-        let local_symbol_map = symbol_slots
-            .iter()
-            .fold(context.symbol_map.clone(), |acc, (stack, val)| {
-                acc.update(*stack, *val)
-            });
-
-        let local_context = CompilerContext {
-            value_map: local_map,
-            symbol_map: local_symbol_map,
-            ..context.clone()
-        };
-
-        // 4. parse sexp into expr
-        let code_label = format!("L{}", context.shared.label_gen.get()); // this is a hack...
-        match sexp_maybe {
-            Ok(sexp) => match parse_repl(&sexp) {
-                Ok(ExprKind::Define(id, e)) => {
-                    let shared_context = SharedContext {
-                        function_definitions: functions.clone(),
-                        ..local_context.shared.clone()
-                    };
-                    let branch_context = CompilerContext {
-                        shared: &shared_context,
-                        ..local_context.clone()
-                    };
-                    let bindings_snapshot: Vec<(String, BindingSymbol)> = define_symbols
-                        .iter()
-                        .map(|(name, symbol)| (name.clone(), symbol.clone()))
-                        .collect();
-                    let validation_inputs = ValidationInputs {
-                        fn_defs: &branch_context.shared.function_definitions,
-                        allow_input: false,
-                        in_function: None,
-                    };
-                    let validated = match validate_expr_with_bindings(
-                        &e,
-                        validation_inputs,
-                        &bindings_snapshot,
-                        next_symbol_id,
-                    ) {
-                        Ok(expr) => expr,
-                        Err(err) => {
-                            eprintln!("{}", std::io::Error::from(err));
-                            continue;
-                        }
-                    };
-
-                    if is_typed {
-                        if let Err(e) = main_tc(
-                            &validated,
-                            &start_symbol_env,
-                            &branch_context.shared.function_definitions,
-                            None,
-                        ) {
-                            eprintln!("{}", std::io::Error::from(e));
-                            continue;
-                        }
-                    }
-
-                    let res = compile_validated_expr(
-                        &validated,
-                        branch_context,
-                        vec![Instr::TwoArg(
-                            OpCode::Mov,
-                            Loc::Reg(Rq::RBP),
-                            Val::Place(Loc::Reg(Rq::RSP)),
-                        )],
-                    )
-                    .map_err(std::io::Error::from)
-                    .and_then(|vec| consume_dynasm(&mut emitter, code_label, vec))
-                    .bind(|consumer| exert_repl(consumer, &mut define_vec));
-                    match res {
-                        Err(e) => eprintln!("{}", e),
-                        Ok(retval) => {
-                            let (val, t): (i64, Type) = match retval {
-                                ReturnValue::Num(i) => (i << 1, Type::Num),
-                                ReturnValue::Bool(true) => (3, Type::Bool),
-                                ReturnValue::Bool(false) => (1, Type::Bool),
-                            };
-                            define_vals = define_vals
-                                .update(id.clone(), Val::Place(Loc::Offset(Rq::RDI, place)));
-                            let symbol = BindingSymbol::new(
-                                StackVar(next_symbol_id),
-                                id.clone(),
-                                SymbolKind::LetBinding,
-                            );
-                            next_symbol_id += 1;
-                            define_symbols = define_symbols.update(id.clone(), symbol.clone());
-                            symbol_slots = symbol_slots
-                                .update(symbol.id, Val::Place(Loc::Offset(Rq::RDI, place)));
-                            place += 8;
-                            define_vec.push(val);
-                            if is_typed {
-                                start_symbol_env = start_symbol_env.update(symbol.id, t);
-                            }
-                        }
-                    }
-                }
-                Ok(ExprKind::Function(f)) => {
-                    if functions.contains_key(&*f.name) {
-                        eprintln!("ERR: function {} already exists.", f.name);
-                    } else {
-                        // another disgusting clone
-                        let fn_defs = &f.args;
-                        let fn_type = f.fn_type;
-                        let f_args = f.args.clone();
-                        // let f_args: im::HashSet<String> = f.args.iter().fold(im::HashSet::new(),
-                        //     |acc, a| acc.update(a.to_string()));
-                        let tentative_functions =
-                            functions.update(f.name.clone(), (f_args, f.fn_type));
-
-                        let validated_fn = match validate_function_body(
-                            &f.body,
-                            &tentative_functions,
-                            &f.args,
-                            &f.name,
-                        ) {
-                            Ok(body) => body,
-                            Err(e) => {
-                                eprintln!("{}", std::io::Error::from(e));
-                                continue;
-                            }
-                        };
-
-                        if is_typed {
-                            // typecheck environment using function args
-                            let args_env = create_fn_tc_env(&validated_fn.params, fn_defs);
-
-                            // union of args_env and global bindings
-                            let mut fn_env = args_env;
-                            for (symbol, t) in start_symbol_env.iter() {
-                                fn_env = fn_env.update(*symbol, *t);
-                            }
-
-                            match main_tc(&validated_fn.body, &fn_env, &tentative_functions, None) {
-                                Ok(e_type) => {
-                                    if !e_type.is_subtype_of(fn_type) {
-                                        let err = TypeError::TypeMismatch(fn_type, e_type);
-                                        eprintln!("{}", std::io::Error::from(err));
-                                        continue;
-                                    } else {
-                                        // println!("Function will evaluate to: {}", e_type.to_string());
-                                    }
-                                }
-                                Err(e) => {
-                                    eprintln!("{}", std::io::Error::from(e));
-                                    continue;
-                                }
-                            }
-                        }
-
-                        // save tentative functions, now that it is good
-                        functions = tentative_functions;
-
-                        // create fn context
-                        let shared_fn_context = SharedContext {
-                            function_definitions: functions.clone(),
-                            ..local_context.shared.clone()
-                        };
-                        let fn_context = CompilerContext {
-                            si: -8,
-                            shared: &shared_fn_context,
-                            ..local_context.clone()
-                        };
-
-                        // compile function and send to emitter
-                        let res = compile_validated_fn(f, &validated_fn, fn_context)
-                            .map_err(std::io::Error::from) // enter the io ecosystem
-                            .and_then(|(name, instrs)| consume_dynasm(&mut emitter, name, instrs));
-                        if let Err(e) = res {
-                            eprintln!("{}", e);
-                        } else {
-                            emitter.discard();
-                        }
-                    }
-                }
-                Ok(ExprKind::Normal(e)) => {
-                    let shared_context = SharedContext {
-                        function_definitions: functions.clone(),
-                        ..local_context.shared.clone()
-                    };
-                    let local_context = CompilerContext {
-                        shared: &shared_context,
-                        ..local_context.clone()
-                    };
-                    let bindings_snapshot: Vec<(String, BindingSymbol)> = define_symbols
-                        .iter()
-                        .map(|(name, symbol)| (name.clone(), symbol.clone()))
-                        .collect();
-                    let validation_inputs = ValidationInputs {
-                        fn_defs: &local_context.shared.function_definitions,
-                        allow_input: false,
-                        in_function: None,
-                    };
-                    let validated = match validate_expr_with_bindings(
-                        &e,
-                        validation_inputs,
-                        &bindings_snapshot,
-                        next_symbol_id,
-                    ) {
-                        Ok(expr) => expr,
-                        Err(err) => {
-                            eprintln!("{}", std::io::Error::from(err));
-                            continue;
-                        }
-                    };
-                    if is_typed {
-                        if let Err(e) = main_tc(
-                            &validated,
-                            &start_symbol_env,
-                            &local_context.shared.function_definitions,
-                            None,
-                        ) {
-                            eprintln!("{}", std::io::Error::from(e));
-                            continue;
-                        }
-                    }
-                    let base = vec![Instr::TwoArg(
-                        OpCode::Mov,
-                        Loc::Reg(Rq::RBP),
-                        Val::Place(Loc::Reg(Rq::RSP)),
-                    )];
-                    let res = compile_validated_expr(&validated, local_context, base)
-                        .map_err(std::io::Error::from) // enter the io ecosystem
-                        .bind(|vec| consume_dynasm(&mut emitter, code_label, vec))
-                        .bind(|consumer| exert_repl(consumer, &mut define_vec))
-                        .and_then(snek_format);
-                    if let Err(e) = res {
-                        eprintln!("{}", e);
-                    }
-                }
-                Err(parse_error) => {
-                    eprintln!("parse error: {:?}", parse_error);
-                    continue;
-                }
-            },
-            Err(e) if e.message.contains("unexpected eof") => {
-                println!("Goodbye!");
-                return;
-            }
-            Err(e) => {
-                println!("Error parsing S-Expression: {:?}", e);
-                continue;
-            }
-        };
-    }
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -487,27 +241,28 @@ fn run_jit(
     functions: &[(String, Vec<Instr>)],
     our_code: &[Instr],
     input: Option<i64>,
-    mut emitter: EaterOfWords,
 ) -> Result<ReturnValue, RuntimeError> {
+    let mut emitter_guard = emitter.write().unwrap();
+
     // 0. consume errors
-    emitter.consume_slice("type_error".to_string(), &TYPE_ERROR[..]);
-    emitter.consume_slice("overflow_error".to_string(), &OVERFLOW_ERROR[..]);
-    emitter.consume_slice("cast_error".to_string(), &CAST_ERROR[..]);
+    emitter_guard.consume_slice("type_error".to_string(), &TYPE_ERROR[..]);
+    emitter_guard.consume_slice("overflow_error".to_string(), &OVERFLOW_ERROR[..]);
+    emitter_guard.consume_slice("cast_error".to_string(), &CAST_ERROR[..]);
 
     // 1. consume functions
     for (name, body) in functions.iter() {
-        emitter.consume_slice(name.clone(), body);
+        emitter_guard.consume_slice(name.clone(), body);
     }
-    emitter.discard();
+    emitter_guard.discard();
 
     // 2. consume our_code
-    emitter.consume_slice("our_code_starts_here".to_string(), our_code);
+    emitter_guard.consume_slice("our_code_starts_here".to_string(), our_code);
 
     // 3. run
-    exert(&mut emitter, input)
+    exert(input)
 }
 
-fn main_tc(
+pub fn main_tc(
     e: &ValidatedExpr,
     env: &im::HashMap<StackVar, Type>,
     fn_env: &FnDefs,
@@ -518,14 +273,18 @@ fn main_tc(
 }
 
 fn main() -> std::io::Result<()> {
+    init_tracing();
+
     let args: Vec<String> = env::args().collect();
     if args.get(1).is_none() {
         usage_message(&args[0]);
         return Ok(());
     }
 
+    debug!("Executing in mode: {}", args[1]);
+
     // mode
-    let (mode, is_typed): (Mode, bool) = match &*args[1] {
+    let (mode, is_typed): (Mode, bool) = match args[1].as_ref() {
         "-i" => (Mode::Repl, false),
         "-e" => (Mode::Jit, false),
         "-c" => (Mode::Aot, false),
@@ -564,20 +323,22 @@ fn main() -> std::io::Result<()> {
         }
     };
 
-    let mut emitter: EaterOfWords = EaterOfWords::new();
-
-    let label_gen: LabelNumGenerator = LabelNumGenerator::new();
     let has_input = input.is_some() || mode == Mode::Aot;
 
     // REPL dispatch
     if let Mode::Repl = mode {
+        let mut emitter_guard = emitter.write().unwrap();
+
         let shared_context = SharedContext::default(&label_gen, im::HashMap::new());
-        let top_lvl_context = CompilerContext::new(&shared_context, has_input);
-        emitter.consume_slice("type_error".to_string(), &TYPE_ERROR[..]);
-        emitter.consume_slice("overflow_error".to_string(), &OVERFLOW_ERROR[..]);
-        emitter.consume_slice("cast_error".to_string(), &CAST_ERROR[..]);
-        emitter.discard(); // badly named -- this just advances the start pointer
-        repl_new(emitter, top_lvl_context, is_typed);
+        let top_lvl_context = CompilerContext::new(Arc::new(shared_context), has_input);
+        emitter_guard.consume_slice("type_error".to_string(), &TYPE_ERROR[..]);
+        emitter_guard.consume_slice("overflow_error".to_string(), &OVERFLOW_ERROR[..]);
+        emitter_guard.consume_slice("cast_error".to_string(), &CAST_ERROR[..]);
+        emitter_guard.discard(); // badly named -- this just advances the start pointer
+        drop(emitter_guard);
+
+        repl_new(top_lvl_context, is_typed);
+
         return Ok(());
     }
 
@@ -624,7 +385,7 @@ fn main() -> std::io::Result<()> {
                     }
                 })?;
 
-                emitter.prep_fn(name.clone());
+                emitter.write().unwrap().prep_fn(name.clone());
 
                 Ok(acc.update(name.to_string(), (args.clone(), *t)))
             })?;
@@ -692,8 +453,8 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    let shared_context = SharedContext::default(&label_gen, function_definitions);
-    let top_lvl_context = CompilerContext::new(&shared_context, has_input);
+    let shared_context = Arc::new(SharedContext::default(&label_gen, function_definitions));
+    let top_lvl_context = CompilerContext::new(shared_context.clone(), has_input);
 
     let fn_context = CompilerContext {
         si: -8, // at 0, we have the return pointer.
@@ -703,11 +464,8 @@ fn main() -> std::io::Result<()> {
     // compile all functions into blocks that end with 'ret'
     let mut fns = Vec::with_capacity(validated_fns.len());
     for (snekfn, validated_body) in validated_fns.into_iter() {
-        let new_shared_context = SharedContext {
-            ..shared_context.clone()
-        };
         let new_context = CompilerContext {
-            shared: &new_shared_context,
+            shared: shared_context.clone(),
             ..fn_context.clone()
         };
         let fn_res = compile_validated_fn(snekfn, &validated_body, new_context)?;
@@ -736,7 +494,7 @@ fn main() -> std::io::Result<()> {
         Mode::Repl => {
             panic!("this shouldn't happen")
         }
-        Mode::Jit => snek_format(run_jit(&fns[..], &our_code_instrs[..], input, emitter)?),
+        Mode::Jit => snek_format(run_jit(&fns[..], &our_code_instrs[..], input)?),
         Mode::Aot => {
             let dst_file = out_file.unwrap();
             write_aot(&fns[..], &our_code_instrs[..], dst_file)
@@ -746,7 +504,230 @@ fn main() -> std::io::Result<()> {
             write_aot(&fns[..], &our_code_instrs[..], out_file.unwrap())?;
 
             // do jit
-            snek_format(run_jit(&fns[..], &our_code_instrs[..], input, emitter)?)
+            snek_format(run_jit(&fns[..], &our_code_instrs[..], input)?)
         }
     }
+}
+
+#[warn(unused_results)]
+fn compile_fun(
+    f: SnekFn,
+    functions: &mut FnDefs,
+    local_context: &CompilerContext,
+    start_symbol_env: &im::HashMap<StackVar, Type>,
+    is_typed: bool,
+) -> ControlFlow<()> {
+    // another disgusting clone
+    let fn_defs = &f.args;
+    let fn_type = f.fn_type;
+    let f_args = f.args.clone();
+    // let f_args: im::HashSet<String> = f.args.iter().fold(im::HashSet::new(),
+    //     |acc, a| acc.update(a.to_string()));
+    let tentative_functions = functions.update(f.name.clone(), (f_args, f.fn_type));
+
+    let validated_fn = match validate_function_body(&f.body, &tentative_functions, &f.args, &f.name)
+    {
+        Ok(body) => body,
+        Err(e) => {
+            eprintln!("{}", std::io::Error::from(e));
+            return ControlFlow::Continue(());
+        }
+    };
+
+    // create fn context
+    let shared_fn_context = SharedContext {
+        function_definitions: functions.clone(),
+        ..local_context.shared.as_ref().clone()
+    };
+    let fn_context = CompilerContext {
+        si: -8,
+        shared: Arc::new(shared_fn_context),
+        ..local_context.clone()
+    };
+
+    if is_typed {
+        // typecheck environment using function args
+        let args_env = create_fn_tc_env(&validated_fn.params, fn_defs);
+
+        // union of args_env and global bindings
+        let mut fn_env = args_env;
+        for (symbol, t) in start_symbol_env.iter() {
+            fn_env = fn_env.update(*symbol, *t);
+        }
+
+        match main_tc(&validated_fn.body, &fn_env, &tentative_functions, None) {
+            Ok(e_type) => {
+                if !e_type.is_subtype_of(fn_type) {
+                    let err = TypeError::TypeMismatch(fn_type, e_type);
+                    eprintln!("{}", std::io::Error::from(err));
+                    return ControlFlow::Break(());
+                } else {
+                    // println!("Function will evaluate to: {}", e_type.to_string());
+                }
+            }
+            Err(e) => {
+                eprintln!("{}", std::io::Error::from(e));
+                return ControlFlow::Break(());
+            }
+        }
+
+        // save tentative functions, now that it is good
+        *functions = tentative_functions.as_ref().clone();
+
+        // compile function and send to emitter
+        let res = compile_validated_fn(f, &validated_fn, fn_context)
+            .map_err(std::io::Error::from) // enter the io ecosystem
+            .and_then(|(name, instrs)| consume_dynasm(name, instrs));
+        if let Err(e) = res {
+            eprintln!("{}", e);
+            ControlFlow::Break(())
+        } else {
+            emitter.write().unwrap().discard();
+            ControlFlow::Continue(())
+        }
+    } else {
+        // No type checking: compile stub
+
+        let mut stub_space_guard = stub_space.write().unwrap();
+        let args = vec![0i64; f.args.len()];
+
+        let stub_idx = stub_space_guard.len() as i64;
+        stub_space_guard.push(JitCompilerSlot {
+            args,
+            fm: f.clone(),
+            validated_fn: validated_fn.clone(),
+            start_symbol_env: start_symbol_env.clone(),
+            fn_context: fn_context.clone(),
+            tentative_functions: tentative_functions.clone(),
+        });
+
+        let args = &mut stub_space_guard.last_mut().unwrap().args;
+
+        let _ = consume_dynasm(f.name.clone(), {
+            let mut instrs = vec![];
+
+            // move dynamic arguments to the stub space, which will become inputs to `dispatcher_stub()`
+            for i in 0..args.len() {
+                // the pointer to the arg storage
+                let arg_ptr = args.as_ptr() as usize + 8 * i;
+                let dyn_arg_loc = Loc::Offset(Rq::RSP, -8 - 8 * i as i32);
+                instrs.push(Instr::MovRegImm64(Rq::RCX, arg_ptr as i64));
+                instrs.push(Instr::TwoArg(
+                    OpCode::Mov,
+                    Loc::Reg(Rq::RAX),
+                    Val::Place(dyn_arg_loc),
+                ));
+                instrs.push(Instr::TwoArg(
+                    OpCode::Mov,
+                    Loc::Offset(Rq::RCX, 0),
+                    Val::Place(Loc::Reg(Rq::RAX)),
+                ));
+            }
+
+            // stash rdi to [rsp - 8] (arg0), now that we've copied that over
+            instrs.push(Instr::TwoArg(
+                OpCode::Mov,
+                Loc::Offset(Rq::RSP, -8),
+                Val::Place(Loc::Reg(Rq::RDI)),
+            ));
+
+            // prepare to call `dispatcher_stub()`
+            {
+                // arg 0 (rdi): stub_index
+                instrs.push(Instr::TwoArg(
+                    OpCode::Mov,
+                    Loc::Reg(Rq::RDI),
+                    Val::Imm(stub_idx),
+                ));
+
+                instrs.push(Instr::MovRegImm64(Rq::RAX, dispatcher_stub as usize as i64));
+                instrs.push(Instr::TwoArg(OpCode::Sub, Loc::Reg(Rq::RSP), Val::Imm(8)));
+                instrs.push(Instr::CallRax);
+                instrs.push(Instr::TwoArg(OpCode::Add, Loc::Reg(Rq::RSP), Val::Imm(8)));
+            }
+
+            instrs
+        });
+
+        // save tentative functions, now that it is good
+        *functions = tentative_functions.as_ref().clone();
+
+        ControlFlow::Continue(())
+    }
+}
+
+extern "C" fn dispatcher_stub(i: usize) -> *const u8 {
+    debug!("stub {i}");
+
+    let JitCompilerSlot {
+        args,
+        fm,
+        validated_fn,
+        start_symbol_env,
+        fn_context,
+        tentative_functions,
+    } = &mut stub_space.write().unwrap()[i];
+
+    debug!("invoked with args: {args:#?}");
+
+    let arg_types = {
+        let mut types = Vec::with_capacity(args.len());
+        for i in args {
+            let i = *i;
+            let type_ = match i & 7 {
+                0b111 => {
+                    panic!("Error value encountered in function call")
+                }
+                0b011 | 0b001 => Type::Bool,
+                _ if i & 1 == 0 => Type::Num,
+                _ => panic!("Error value encountered in function call"),
+            };
+            types.push(type_);
+        }
+        types
+    };
+
+    let fn_defs = fm
+        .args
+        .iter()
+        .zip(arg_types)
+        .map(|((fun_name, _), type_)| (fun_name.clone(), type_))
+        .collect::<Vec<_>>();
+
+    // typecheck environment using function args
+    let args_env = create_fn_tc_env(&validated_fn.params, &fn_defs);
+
+    // union of args_env and global bindings
+    let mut fn_env = args_env;
+    for (symbol, t) in start_symbol_env.iter() {
+        fn_env = fn_env.update(*symbol, *t);
+    }
+
+    let texpr = strictify_expr(
+        validated_fn.body.clone(),
+        &fn_env,
+        tentative_functions,
+        None,
+    )
+    .unwrap_or_else(|error| panic!("Encountered type error {error} during JIT compilation"));
+
+    let new_fm = SnekFn {
+        args: fn_defs,
+        ..fm.clone()
+    };
+    let fast_fn = ValidatedFunction {
+        body: texpr.into(),
+        params: validated_fn.params.clone(),
+    };
+
+    let fast_fn_offset = emitter.read().unwrap().current_offset();
+
+    compile_validated_fn(new_fm, &fast_fn, fn_context.clone())
+        .map_err(std::io::Error::from)
+        .and_then(|(name, instrs)| consume_dynasm(name, instrs))
+        .unwrap();
+
+    emitter.write().unwrap().discard();
+
+    fast_fn_offset
 }

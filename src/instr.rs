@@ -75,6 +75,8 @@ pub enum Instr {
     Ret,
     MovLabel(Rq, String),
     CallPrint(Rq),
+    MovRegImm64(Rq, i64),
+    CallRax,
 }
 
 const TYPE_ERROR_CODE: i64 = 0b111;
@@ -163,7 +165,7 @@ impl Instr {
             },
             Instr::Label(name) => format!("{name}:"),
             Instr::Jump(branch, name) => format!("{} {}", branch, name),
-            Instr::Neg(loc) => format!("neg {}", loc), // special case for now
+            Instr::Neg(loc) => format!("neg {}", loc),
             Instr::Ret => "ret".to_string(),
             Instr::MovLabel(reg, label) => format!("mov {}, {}", as_string(reg), label),
             Instr::CallPrint(reg) => format!(
@@ -171,6 +173,9 @@ impl Instr {
                 as_string(reg),
                 as_string(reg)
             ),
+            Instr::MovRegImm64(_, _) | Instr::CallRax => {
+                unimplemented!("Only the JIT mode uses this instruction; implementation deferred")
+            }
         }
     }
 }
