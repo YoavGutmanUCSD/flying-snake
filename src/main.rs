@@ -36,10 +36,7 @@ use std::ops::ControlFlow;
 use std::sync::{Arc, RwLock};
 use types::Type;
 use validate::ast::{BindingSymbol, StackVar, ValidatedExpr};
-use validate::{
-    validate_expr, validate_function_body, ValidatedFunction,
-    ValidationInputs,
-};
+use validate::{validate_expr, validate_function_body, ValidatedFunction, ValidationInputs};
 
 use dynasmrt::x64::Rq;
 
@@ -168,8 +165,7 @@ fn invoke_entry(entry: *const u8, arg: Option<*mut i64>) -> i64 {
     unsafe {
         match arg {
             Some(ptr) => {
-                let jitted_fn: extern "C" fn(*mut i64) -> i64 =
-                    std::mem::transmute(entry);
+                let jitted_fn: extern "C" fn(*mut i64) -> i64 = std::mem::transmute(entry);
                 jitted_fn(ptr)
             }
             None => {

@@ -1,3 +1,4 @@
+use crate::ast::Expr;
 use crate::compile::compile_validated_expr;
 use crate::context::FnDefs;
 use crate::context::{CompilerContext, SharedContext};
@@ -5,7 +6,7 @@ use crate::errors::HomogenousBind;
 use crate::instr::{Instr, Loc, OpCode, Val};
 use crate::jit::ReturnValue;
 use crate::types::Type;
-use crate::validate::ast::{BindingSymbol, StackVar, SymbolKind};
+use crate::validate::ast::{BindingSymbol, StackVar, SymbolKind, ValidatedExpr};
 use crate::validate::{validate_expr_with_bindings, ValidationInputs};
 use crate::{compile_fun, consume_dynasm, exert_repl, main_tc, parse_repl, snek_format, ExprKind};
 
@@ -54,69 +55,27 @@ pub fn repl_new(context: CompilerContext, is_typed: bool) {
         let sexp_maybe = parse(input.trim());
 
         // 3. create context
-        let local_map = define_vals
-            .iter()
-            .fold(context.value_map.clone(), |acc, (key, val)| {
-                acc.update(key.to_string(), *val)
-            });
-
-        let local_symbol_map = symbol_slots
-            .iter()
-            .fold(context.symbol_map.clone(), |acc, (stack, val)| {
-                acc.update(*stack, *val)
-            });
-
-        let local_context = CompilerContext {
-            value_map: local_map,
-            symbol_map: local_symbol_map,
-            ..context.clone()
-        };
+        let local_context = build_local_context(&context, &define_vals, &symbol_slots);
 
         // 4. parse sexp into expr
         let code_label = format!("L{}", context.shared.label_gen.get()); // this is a hack...
         match sexp_maybe {
             Ok(sexp) => match parse_repl(&sexp) {
                 Ok(ExprKind::Define(id, e)) => {
-                    let shared_context = SharedContext {
-                        function_definitions: functions.clone(),
-                        ..local_context.shared.as_ref().clone()
-                    };
-                    let branch_context = CompilerContext {
-                        shared: Arc::new(shared_context),
-                        ..local_context.clone()
-                    };
-                    let bindings_snapshot: Vec<(String, BindingSymbol)> = define_symbols
-                        .iter()
-                        .map(|(name, symbol)| (name.clone(), symbol.clone()))
-                        .collect();
-                    let validation_inputs = ValidationInputs {
-                        fn_defs: &branch_context.shared.function_definitions,
-                        allow_input: false,
-                        in_function: None,
-                    };
-                    let validated = match validate_expr_with_bindings(
-                        &e,
-                        validation_inputs,
-                        &bindings_snapshot,
-                        next_symbol_id,
-                    ) {
-                        Ok(expr) => expr,
-                        Err(err) => {
-                            eprintln!("{}", std::io::Error::from(err));
-                            continue;
-                        }
+                    let branch_context = attach_functions(&local_context, &functions);
+                    let Some(validated) =
+                        validate_repl_expr(&e, &branch_context, &define_symbols, next_symbol_id)
+                    else {
+                        continue;
                     };
 
-                    if is_typed {
-                        if let Err(e) = crate::main_tc(
-                            &validated,
-                            &start_symbol_env,
-                            &branch_context.shared.function_definitions,
-                            None,
-                        ) {
-                            eprintln!("{}", std::io::Error::from(e));
-                            continue;
-                        }
+                    if !typecheck_repl_expr(
+                        is_typed,
+                        &validated,
+                        &start_symbol_env,
+                        &branch_context.shared.function_definitions,
+                    ) {
+                        continue;
                     }
 
                     let res = compile_validated_expr(
@@ -175,52 +134,26 @@ pub fn repl_new(context: CompilerContext, is_typed: bool) {
                     }
                 }
                 Ok(ExprKind::Normal(e)) => {
-                    let shared_context = SharedContext {
-                        function_definitions: functions.clone(),
-                        ..local_context.shared.as_ref().clone()
+                    let exec_context = attach_functions(&local_context, &functions);
+                    let Some(validated) =
+                        validate_repl_expr(&e, &exec_context, &define_symbols, next_symbol_id)
+                    else {
+                        continue;
                     };
-                    let local_context = CompilerContext {
-                        shared: Arc::new(shared_context),
-                        ..local_context.clone()
-                    };
-                    let bindings_snapshot: Vec<(String, BindingSymbol)> = define_symbols
-                        .iter()
-                        .map(|(name, symbol)| (name.clone(), symbol.clone()))
-                        .collect();
-                    let validation_inputs = ValidationInputs {
-                        fn_defs: &local_context.shared.function_definitions,
-                        allow_input: false,
-                        in_function: None,
-                    };
-                    let validated = match validate_expr_with_bindings(
-                        &e,
-                        validation_inputs,
-                        &bindings_snapshot,
-                        next_symbol_id,
+                    if !typecheck_repl_expr(
+                        is_typed,
+                        &validated,
+                        &start_symbol_env,
+                        &exec_context.shared.function_definitions,
                     ) {
-                        Ok(expr) => expr,
-                        Err(err) => {
-                            eprintln!("{}", std::io::Error::from(err));
-                            continue;
-                        }
-                    };
-                    if is_typed {
-                        if let Err(e) = main_tc(
-                            &validated,
-                            &start_symbol_env,
-                            &local_context.shared.function_definitions,
-                            None,
-                        ) {
-                            eprintln!("{}", std::io::Error::from(e));
-                            continue;
-                        }
+                        continue;
                     }
                     let base = vec![Instr::TwoArg(
                         OpCode::Mov,
                         Loc::Reg(Rq::RBP),
                         Val::Place(Loc::Reg(Rq::RSP)),
                     )];
-                    let res = compile_validated_expr(&validated, local_context, base)
+                    let res = compile_validated_expr(&validated, exec_context, base)
                         .map_err(std::io::Error::from) // enter the io ecosystem
                         .bind(|vec| consume_dynasm(code_label, vec))
                         .bind(|()| exert_repl(&mut define_vec))
@@ -239,5 +172,90 @@ pub fn repl_new(context: CompilerContext, is_typed: bool) {
                 continue;
             }
         };
+    }
+}
+
+fn build_local_context(
+    base: &CompilerContext,
+    define_vals: &im::HashMap<String, Val>,
+    symbol_slots: &im::HashMap<StackVar, Val>,
+) -> CompilerContext {
+    let value_map = define_vals
+        .iter()
+        .fold(base.value_map.clone(), |acc, (key, val)| {
+            acc.update(key.to_string(), *val)
+        });
+    let symbol_map = symbol_slots
+        .iter()
+        .fold(base.symbol_map.clone(), |acc, (stack, val)| {
+            acc.update(*stack, *val)
+        });
+
+    CompilerContext {
+        value_map,
+        symbol_map,
+        ..base.clone()
+    }
+}
+
+fn attach_functions(base: &CompilerContext, functions: &FnDefs) -> CompilerContext {
+    let shared_context = SharedContext {
+        function_definitions: functions.clone(),
+        ..base.shared.as_ref().clone()
+    };
+
+    CompilerContext {
+        shared: Arc::new(shared_context),
+        ..base.clone()
+    }
+}
+
+fn snapshot_bindings(
+    define_symbols: &im::HashMap<String, BindingSymbol>,
+) -> Vec<(String, BindingSymbol)> {
+    define_symbols
+        .iter()
+        .map(|(name, symbol)| (name.clone(), symbol.clone()))
+        .collect()
+}
+
+fn validate_repl_expr(
+    expr: &Expr,
+    context: &CompilerContext,
+    define_symbols: &im::HashMap<String, BindingSymbol>,
+    next_symbol_id: u32,
+) -> Option<ValidatedExpr> {
+    let bindings_snapshot = snapshot_bindings(define_symbols);
+    let validation_inputs = ValidationInputs {
+        fn_defs: &context.shared.function_definitions,
+        allow_input: false,
+        in_function: None,
+    };
+
+    match validate_expr_with_bindings(expr, validation_inputs, &bindings_snapshot, next_symbol_id) {
+        Ok(expr) => Some(expr),
+        Err(err) => {
+            eprintln!("{}", std::io::Error::from(err));
+            None
+        }
+    }
+}
+
+fn typecheck_repl_expr(
+    is_typed: bool,
+    expr: &ValidatedExpr,
+    env: &im::HashMap<StackVar, Type>,
+    fn_defs: &FnDefs,
+) -> bool {
+    if !is_typed {
+        return true;
+    }
+
+    match main_tc(expr, env, fn_defs, None) {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("{}", std::io::Error::from(e));
+            false
+        }
     }
 }

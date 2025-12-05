@@ -76,6 +76,7 @@ impl EaterOfWords {
         self.ops.commit().unwrap();
     }
 
+    #[allow(dead_code)]
     pub fn exert(&mut self, arg: Option<*mut i64>) -> Result<ReturnValue, RuntimeError> {
         let reader = self.ops.reader();
         let buf = reader.lock();
