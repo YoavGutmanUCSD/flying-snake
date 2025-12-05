@@ -1,4 +1,5 @@
 use im::HashMap;
+use im::HashSet;
 
 use crate::ast::Op1;
 use crate::instr::Val;
@@ -9,7 +10,7 @@ use super::ast::TypedCall;
 use super::ast::{TypedExpr as TExpr, TypedExpr_::*};
 use crate::validate::ast::StackVar;
 
-fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, changed: &mut bool) -> TExpr {
+fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, volatile_set: &HashSet<StackVar>, changed: &mut bool) -> TExpr {
     let (expr, expr_type) = (e.0, e.1);
     match expr {
         Let(bindings, let_expr) => {
@@ -17,6 +18,11 @@ fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, changed: &mut bool) -> T
             let mut new_env = env.clone();
             for binding in bindings.into_iter() {
                 let id = binding.symbol.id;
+                // never inline something volatile!!
+                if volatile_set.contains(&id) {
+                    good_bindings.push(binding);
+                    continue;
+                }
                 match binding.value.0 {
                     Number(i) => {
                         *changed = true;
@@ -31,7 +37,7 @@ fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, changed: &mut bool) -> T
                     }
                 }
             }
-            let new_let_expr = inline_const(*let_expr, &new_env, changed);
+            let new_let_expr = inline_const(*let_expr, &new_env, volatile_set, changed);
             TExpr(Let(good_bindings, Box::new(new_let_expr)), expr_type)
         }
         Symbol(symbol) => {
@@ -49,7 +55,7 @@ fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, changed: &mut bool) -> T
         Block(exprs) => {
             let good_exprs = exprs
                 .into_iter()
-                .map(|expr| inline_const(expr, env, changed))
+                .map(|expr| inline_const(expr, env, volatile_set, changed))
                 .collect::<Vec<TExpr>>();
             TExpr(Block(good_exprs), expr_type)
         }
@@ -57,7 +63,7 @@ fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, changed: &mut bool) -> T
             let good_args = typed_call
                 .args
                 .into_iter()
-                .map(|expr| inline_const(expr, env, changed))
+                .map(|expr| inline_const(expr, env, volatile_set, changed))
                 .collect::<Vec<TExpr>>();
             let new_call = TypedCall {
                 args: good_args,
@@ -66,24 +72,24 @@ fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, changed: &mut bool) -> T
             TExpr(Call(new_call), expr_type)
         }
         UnOp(checks, op, e) => TExpr(
-            UnOp(checks, op, Box::new(inline_const(*e, env, changed))),
+            UnOp(checks, op, Box::new(inline_const(*e, env, volatile_set, changed))),
             expr_type,
         ),
         BinOp(checks, op, e1, e2) => TExpr(
             BinOp(
                 checks,
                 op,
-                Box::new(inline_const(*e1, env, changed)),
-                Box::new(inline_const(*e2, env, changed)),
+                Box::new(inline_const(*e1, env, volatile_set, changed)),
+                Box::new(inline_const(*e2, env, volatile_set, changed)),
             ),
             expr_type,
         ),
         If(checks, econd, e1, e2) => TExpr(
             If(
                 checks,
-                Box::new(inline_const(*econd, env, changed)),
-                Box::new(inline_const(*e1, env, changed)),
-                Box::new(inline_const(*e2, env, changed)),
+                Box::new(inline_const(*econd, env, volatile_set, changed)),
+                Box::new(inline_const(*e1, env, volatile_set, changed)),
+                Box::new(inline_const(*e2, env, volatile_set, changed)),
             ),
             expr_type,
         ),
@@ -91,23 +97,23 @@ fn inline_const(e: TExpr, env: &HashMap<StackVar, Val>, changed: &mut bool) -> T
             Set(
                 checks,
                 set_id,
-                Box::new(inline_const(*set_expr, env, changed)),
+                Box::new(inline_const(*set_expr, env, volatile_set, changed)),
             ),
             expr_type,
         ),
         Loop(loop_expr) => TExpr(
-            Loop(Box::new(inline_const(*loop_expr, env, changed))),
+            Loop(Box::new(inline_const(*loop_expr, env, volatile_set, changed))),
             expr_type,
         ),
         Break(break_expr) => TExpr(
-            Break(Box::new(inline_const(*break_expr, env, changed))),
+            Break(Box::new(inline_const(*break_expr, env, volatile_set, changed))),
             expr_type,
         ),
         Print(print_expr) => TExpr(
-            Print(Box::new(inline_const(*print_expr, env, changed))),
+            Print(Box::new(inline_const(*print_expr, env, volatile_set, changed))),
             expr_type,
         ),
-        Cast(expr) => TExpr(Cast(Box::new(inline_const(*expr, env, changed))), expr_type),
+        Cast(expr) => TExpr(Cast(Box::new(inline_const(*expr, env, volatile_set, changed))), expr_type),
         _ => TExpr(expr, expr_type),
     }
 }
@@ -201,6 +207,61 @@ fn simplify(e: TExpr, changed: &mut bool) -> TExpr {
     }
 }
 
+// i am getting so sick of writing the same structure every time
+// trying a new while let structure
+fn find_volatiles(e: &TExpr) -> HashSet<StackVar> {
+    let mut expr_stack: Vec<&TExpr> = vec![e];
+    let mut volatiles = im::HashSet::new();
+
+    while let Some(TExpr(e, _)) = expr_stack.pop() {
+        match e {
+            Set(_, symbol, body) => {
+                expr_stack.push(body);
+                volatiles = volatiles.update(symbol.id);
+            }
+            Let(bindings, let_expr) => {
+                for binding in bindings.iter() {
+                    expr_stack.push(&binding.value);
+                }
+                expr_stack.push(let_expr);
+            }
+            UnOp(_, _, unop_body) => {
+                expr_stack.push(unop_body);
+            }
+            BinOp(_, _, e1, e2) => {
+                expr_stack.push(e1);
+                expr_stack.push(e2);
+            }
+            If(_, econd, e1, e2) => {
+                expr_stack.push(econd);
+                expr_stack.push(e1);
+                expr_stack.push(e2);
+            }
+            Loop(body) => {
+                expr_stack.push(body);
+            }
+            Break(body) => {
+                expr_stack.push(body);
+            }
+            Block(exprs) => {
+                expr_stack.extend(exprs);
+            }
+            // Call(TypedCall),
+            Call(typed_call) => {
+                expr_stack.extend(&typed_call.args);
+            }
+            Print(body) => {
+                expr_stack.push(body);
+            }
+            Cast(body) => {
+                expr_stack.push(body);
+            }
+            _ => ()
+        }
+    }
+    volatiles
+}
+
 pub fn optimize(e: TExpr, define_env: &HashMap<StackVar, Val>) -> TExpr {
     // if this is ever false after the loop, can return.
     let mut change_counter: bool;
@@ -210,7 +271,8 @@ pub fn optimize(e: TExpr, define_env: &HashMap<StackVar, Val>) -> TExpr {
     loop {
         change_counter = false;
         final_expr = simplify(final_expr, &mut change_counter);
-        final_expr = inline_const(final_expr, define_env, &mut change_counter);
+        let volatile_set = find_volatiles(&final_expr);
+        final_expr = inline_const(final_expr, define_env, &volatile_set, &mut change_counter);
         // add more optimizations after or before this one. should be plug and play
 
         if !change_counter {
