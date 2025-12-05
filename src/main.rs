@@ -20,7 +20,7 @@ use context::{CompilerContext, LabelNumGenerator, SharedContext};
 use errors::{CompileError, HomogenousBind, ParseError, RuntimeError, TypeError};
 use instr::{Instr, Loc, OpCode, Val, CAST_ERROR, OVERFLOW_ERROR, TYPE_ERROR};
 use jit::{EaterOfWords, ReturnValue};
-use optimize::strictify_expr;
+use optimize::{strictify_expr, optimize};
 use parse::{parse_expr, parse_fn};
 use sexp::Atom::*;
 use sexp::*;
@@ -224,7 +224,7 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         allow_input: false,
                         in_function: None,
                     };
-                    let validated = match validate_expr_with_bindings(
+                    let mut validated = match validate_expr_with_bindings(
                         &e,
                         validation_inputs,
                         &bindings_snapshot,
@@ -376,7 +376,7 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         allow_input: false,
                         in_function: None,
                     };
-                    let validated = match validate_expr_with_bindings(
+                    let mut validated = match validate_expr_with_bindings(
                         &e,
                         validation_inputs,
                         &bindings_snapshot,
@@ -389,14 +389,23 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                         }
                     };
                     if is_typed {
-                        if let Err(e) = main_tc(
-                            &validated,
+                        let typed = strictify_expr(
+                            validated,
                             &start_symbol_env,
                             &local_context.shared.function_definitions,
-                            None,
-                        ) {
-                            eprintln!("{}", std::io::Error::from(e));
-                            continue;
+                            None
+                        );
+                        match typed {
+                            Err(e) => {
+                                eprintln!("{}", std::io::Error::from(e));
+                                continue;
+                            }
+                            Ok(typed_expr) => {
+                                let type_env = im::HashMap::new();
+                                validated = optimize(typed_expr, &type_env,
+                                    &local_context.symbol_map)
+                                    .into();
+                            }
                         }
                     }
                     let base = vec![Instr::TwoArg(
@@ -406,7 +415,12 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                     )];
                     let res = compile_validated_expr(&validated, local_context, base)
                         .map_err(std::io::Error::from) // enter the io ecosystem
-                        .bind(|vec| consume_dynasm(&mut emitter, code_label, vec))
+                        .bind(|vec| {
+                            for i in vec.iter() {
+                                println!("{}", i.to_string());
+                            }
+                            consume_dynasm(&mut emitter, code_label, vec)
+                        })
                         .bind(|consumer| exert_repl(consumer, &mut define_vec))
                         .and_then(snek_format);
                     if let Err(e) = res {
