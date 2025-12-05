@@ -20,7 +20,7 @@ use context::{CompilerContext, LabelNumGenerator, SharedContext};
 use errors::{CompileError, HomogenousBind, ParseError, RuntimeError, TypeError};
 use instr::{Instr, Loc, OpCode, Val, CAST_ERROR, OVERFLOW_ERROR, TYPE_ERROR};
 use jit::{EaterOfWords, ReturnValue};
-use optimize::{strictify_expr, optimize};
+use optimize::{optimize, strictify_expr};
 use parse::{parse_expr, parse_fn};
 use sexp::Atom::*;
 use sexp::*;
@@ -393,7 +393,7 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                             validated,
                             &start_symbol_env,
                             &local_context.shared.function_definitions,
-                            None
+                            None,
                         );
                         match typed {
                             Err(e) => {
@@ -402,9 +402,9 @@ fn repl_new(mut emitter: EaterOfWords, context: CompilerContext, is_typed: bool)
                             }
                             Ok(typed_expr) => {
                                 let type_env = im::HashMap::new();
-                                validated = optimize(typed_expr, &type_env,
-                                    &local_context.symbol_map)
-                                    .into();
+                                validated =
+                                    optimize(typed_expr, &type_env, &local_context.symbol_map)
+                                        .into();
                             }
                         }
                     }
@@ -660,6 +660,9 @@ fn main() -> std::io::Result<()> {
 
     // do typecheck here. short circuit on failure.
     if is_typed {
+        // 0. create some dummy empty hashmaps to pass into optimize step
+        let empty_type_env = im::HashMap::new();
+        let empty_define_env = im::HashMap::new();
         // 1. typecheck all functions and replace their validated bodies with strictified output
         for (snekfn, validated_fn) in validated_fns.iter_mut() {
             let (defs, _) = &function_definitions[&*snekfn.name];
@@ -673,7 +676,8 @@ fn main() -> std::io::Result<()> {
             if !typed_body.type_().is_subtype_of(snekfn.fn_type) {
                 return Err(TypeError::TypeMismatch(snekfn.fn_type, typed_body.type_()).into());
             }
-            validated_fn.body = typed_body.into();
+            let optimized = optimize(typed_body, &empty_type_env, &empty_define_env);
+            validated_fn.body = optimized.into();
         }
         // 2. typecheck top level (keep type) and use strictified output for compilation
         let input_type = match input {
@@ -690,7 +694,7 @@ fn main() -> std::io::Result<()> {
             Some(input_type),
         )?;
         let top_tc = typed_top.type_();
-        validated_top_expr = typed_top.into();
+        validated_top_expr = optimize(typed_top, &empty_type_env, &empty_define_env).into();
 
         // 3. print type if -t
         if mode == Mode::Typecheck {
